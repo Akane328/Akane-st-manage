@@ -14,7 +14,7 @@ AUTHOR="三月"
 UPDATE_DATE="2025-08-04"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.05" # 版本号提升
+SCRIPT_VERSION="1.06"
 SCRIPT_NAME="sany-stm.sh"
 # ==== 颜色定义 ====
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m';
@@ -65,7 +65,10 @@ install_or_update_nodejs() {
     fi
 
     if ! _request_sudo_privileges; then return 1; fi
-    check_and_install_deps "curl" "gnupg" || { err "安装Node.js需要curl和gnupg，但安装失败。"; return 1; }
+
+    # ==================== [修复] 检查 gpg 命令，而不是 gnupg 包名 ====================
+    check_and_install_deps "curl" "gpg" || { err "安装Node.js需要curl和gpg(gnupg)，但安装失败。"; return 1; }
+    # ==============================================================================
 
     info "将使用 NodeSource 官方源进行安装..."
     if command -v apt-get &>/dev/null; then
@@ -154,11 +157,18 @@ check_and_install_deps() {
         for dep in "${missing_deps[@]}"; do
              case "$pkg_manager" in
                 "apt-get")
-                    if [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("dnsutils"); else packages_to_install+=("$dep"); fi ;;
+                    # 当需要gpg时，安装gnupg包
+                    if [[ "$dep" == "gpg" ]]; then packages_to_install+=("gnupg");
+                    elif [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("dnsutils"); 
+                    else packages_to_install+=("$dep"); fi ;;
                 "yum")
-                    if [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("bind-utils"); else packages_to_install+=("$dep"); fi ;;
+                    if [[ "$dep" == "gpg" ]]; then packages_to_install+=("gnupg2");
+                    elif [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("bind-utils"); 
+                    else packages_to_install+=("$dep"); fi ;;
                 "pkg")
-                    if [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("dnsutils"); else packages_to_install+=("$dep"); fi ;;
+                    if [[ "$dep" == "gpg" ]]; then packages_to_install+=("gnupg");
+                    elif [[ "$dep" == "dnsutils" ]]; then packages_to_install+=("dnsutils"); 
+                    else packages_to_install+=("$dep"); fi ;;
              esac
         done
         if [ ${#packages_to_install[@]} -gt 0 ]; then
@@ -173,7 +183,8 @@ check_and_install_deps() {
         for dep in "${missing_deps[@]}"; do
              if ! command -v "$dep" >/dev/null; then
                 if [[ "$dep" == "dnsutils" ]] && (command -v "dig" >/dev/null || command -v "nslookup" >/dev/null) ; then continue; fi
-                err "依赖 '$dep' 自动安装失败！"; return 1
+                err "依赖 '$dep' 自动安装失败！"
+                return 1
             fi
         done
         success "所有缺失的依赖已安装成功。"
@@ -183,8 +194,10 @@ check_and_install_deps() {
     return 0
 }
 
-# (这里省略了其他函数，它们保持不变，无需修改)
-# ... diagnose_and_fix_network, _attempt_clone, manage_sillytavern, 等等...
+# (脚本的其余部分保持不变，这里省略以节约篇幅)
+# ...
+# 请从上一个回答中复制 diagnose_and_fix_network 及之后的所有函数到此处 ...
+# ...
 diagnose_and_fix_network() {
     info "操作失败，正在启动网络诊断与修复程序...";
     if ! ping -c 1 1.1.1.1 > /dev/null 2>&1 && ! ping -c 1 223.5.5.5 > /dev/null 2>&1; then err "基础网络连接失败。请检查您的网络连接、路由器状态或系统防火墙设置。"; return 1; fi; success "基础网络连接正常。"
@@ -444,16 +457,11 @@ backup_menu() {
 }
 
 
-# ==============================================================================
-# ==================== [核心修改] 新增的启动预检与主菜单 ====================
-# ==============================================================================
-
 initial_setup_check() {
     info "正在进行环境预检..."
     local deps_ok=true
     local essential_deps=("git" "curl" "jq" "screen")
 
-    # 检查基础依赖
     for dep in "${essential_deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             deps_ok=false
@@ -461,7 +469,6 @@ initial_setup_check() {
         fi
     done
 
-    # 检查Node.js版本
     if [[ "$deps_ok" == true ]]; then
         if command -v node &>/dev/null; then
             local major_version=$(node -v | sed 's/v//' | cut -d'.' -f1)
@@ -478,19 +485,15 @@ initial_setup_check() {
         return 0
     fi
 
-    # 如果环境不完整，则执行初始化流程
     echo
     warn "首次运行或环境不完整，需要进行初始化设置。"
     info "此过程将安装或更新运行本脚本及SillyTavern所需的核心组件。"
     echo
 
-    # 1. 询问代理设置
     handle_proxy_logic "interactive"
 
-    # 2. 安装/更新Node.js
     install_or_update_nodejs || { err "Node.js 环境配置失败，无法继续。"; exit 1; }
 
-    # 3. 安装其他依赖
     check_and_install_deps "${essential_deps[@]}" || { err "基础依赖安装失败，无法继续。"; exit 1; }
     
     echo
@@ -501,7 +504,6 @@ initial_setup_check() {
 
 main_menu() {
     while true; do
-        # [修改] 移除了这里的后台依赖检查
         local st_ver; st_ver=$(get_local_st_ver); local st_status=""; [[ "$st_ver" != "未安装" ]] && st_status=$(check_st_running);
         clear; echo -e "${CYAN}==================================================${NC}"
         echo -e "${WHITE}\n    ___    __ __ ___    _   ________\n   /   |  / //_//   |  / | / / ____/\n  / /| | / ,<  / /| | /  |/ / **/   \n / | |/ /| |/   |/ /|  / /**_   \n/_/  |_/_/ |_/_/  |_/_/ |_/_____/   \n${WHITE}           SillyTavern酒馆管理脚本            ${NC}"
@@ -519,9 +521,5 @@ main_menu() {
     done
 }
 
-# ==================== [核心修改] 调整启动顺序 ====================
-# 1. 首先执行环境预检和自动安装
 initial_setup_check
-
-# 2. 然后进入主菜单循环
 main_menu
