@@ -11,10 +11,10 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-16"
+UPDATE_DATE="2025-08-17"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.18" 
+SCRIPT_VERSION="1.20" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}"
 
@@ -52,6 +52,7 @@ install_or_update_nodejs() {
             warn "当前 Node.js 版本 ($current_version)过旧，需要 >= v${MIN_NODE_VERSION}。"
             info "正在尝试升级到 Node.js v${REQUIRED_NODE_VERSION}..."
         else
+            success "Node.js 版本 ($current_version) 符合要求 (>= v${MIN_NODE_VERSION})。" # 在v1.18中这行被删了, 补回来
             return 0
         fi
     fi
@@ -170,6 +171,7 @@ _ensure_config_exists() {
     local example_config_file="$ST_DIR/config.yaml.example"
     if [ ! -f "$config_file" ]; then
         if [ -f "$example_config_file" ]; then
+            info "未找到 config.yaml，将从 config.yaml.example 创建。"
             cp "$example_config_file" "$config_file"
             return 0
         else
@@ -216,6 +218,7 @@ manage_port() {
 manage_password() {
     _ensure_config_exists || return 1
     local config_file="$ST_DIR/config.yaml"
+    info "即将设置或修改登录凭据。"
     local username
     while true; do
         read -rp "请输入新的用户名: " username
@@ -271,7 +274,7 @@ manage_listening() {
         
         if [[ "$proceed" == "true" ]]; then
             if [[ "$is_auth_enabled" == "false" ]]; then
-                warn "开启网络监听前，请先设置登录密码！"
+                warn "安全警告：开启网络监听前，必须设置登录密码！"
                 read -rp "是否立即设置用户名和密码? (选择'n'将取消开启监听) [Y/n]: " set_pass_now
                 if [[ ! "$set_pass_now" =~ ^[Nn]$ ]]; then
                     if manage_password; then
@@ -284,8 +287,11 @@ manage_listening() {
                     info "已取消设置密码，网络监听保持关闭。"; return 1
                 fi
             fi
+            # [修改] 在开启监听后，自动关闭白名单模式
             sed -i "s/^\(listen:\s*\).*/\1true/" "$config_file"
+            sed -i "s/^\(whitelistMode:\s*\).*/\1false/" "$config_file"
             success "网络监听已开启。"
+            info "为确保可访问，白名单模式(whitelistMode)已自动关闭。"
             return 0
         else
             info "操作已取消，网络监听保持关闭。"; return 1
@@ -327,7 +333,7 @@ manage_sillytavern() {
         manage_listening; if [[ $? -eq 0 ]]; then config_modified=true; fi
         info "首次配置完成！"
         if [[ "$config_modified" == true ]]; then
-            warn "您的配置已修改，重启服务后生效。"
+            warn "您的配置已修改，建议从主菜单重启服务使其生效。"
         fi
     fi
     if [[ "$EUID" -eq 0 && -n "$SUDO_USER" ]]; then chown -R "$SUDO_USER:${SUDO_GID:-$SUDO_USER}" "$ST_DIR"; success "文件权限修正完成！"; fi
@@ -347,7 +353,7 @@ handle_proxy_logic() {
     if [[ "$PROXY_ENABLED" == true ]]; then
         success "加速代理已启用。"
         if [[ -n "$TERMUX_VERSION" ]]; then
-            # [修正] 全自动强制换源逻辑
+            # 全自动强制换源逻辑
             local sources_list_file="$PREFIX/etc/apt/sources.list"
             
             if [ -f "$sources_list_file" ] && grep -qE "tsinghua|ustc|bfsu|aliyun|cqu" "$sources_list_file"; then
