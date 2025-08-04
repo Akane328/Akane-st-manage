@@ -11,10 +11,10 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-17"
+UPDATE_DATE="2025-08-19"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.20" # 版本号提升
+SCRIPT_VERSION="1.22" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}"
 
@@ -39,58 +39,53 @@ _request_sudo_privileges() {
     else err "获取 sudo 权限失败。"; SUDO_CMD=""; return 1; fi
 }
 
+# [修改] 依赖检查静默化
 install_or_update_nodejs() {
-    info "正在检查 Node.js 版本..."
     local MIN_NODE_VERSION=18
     local REQUIRED_NODE_VERSION=20
     if ! command -v node &>/dev/null; then
-        warn "未找到 Node.js。正在尝试安装 Node.js v${REQUIRED_NODE_VERSION}..."
+        warn "未找到 Node.js，正在尝试自动安装..."
     else
         local current_version=$(node -v)
         local major_version=$(echo "$current_version" | sed 's/v//' | cut -d'.' -f1)
         if [[ "$major_version" -lt "$MIN_NODE_VERSION" ]]; then
-            warn "当前 Node.js 版本 ($current_version)过旧，需要 >= v${MIN_NODE_VERSION}。"
-            info "正在尝试升级到 Node.js v${REQUIRED_NODE_VERSION}..."
+            warn "当前 Node.js 版本 ($current_version) 过旧，需要 >= v${MIN_NODE_VERSION}，正在尝试升级..."
         else
-            success "Node.js 版本 ($current_version) 符合要求 (>= v${MIN_NODE_VERSION})。" # 在v1.18中这行被删了, 补回来
             return 0
         fi
     fi
     if [[ -n "$TERMUX_VERSION" ]]; then
-        info "Termux 环境：正在安装/更新 nodejs-lts..."
-        pkg install -y nodejs-lts || { err "在 Termux 中安装 nodejs-lts 失败。"; return 1; }
-        if command -v node &>/dev/null; then success "Node.js (LTS) 安装/更新成功。版本: $(node -v)"; return 0;
+        pkg install -y nodejs-lts >/dev/null 2>&1 || { err "在 Termux 中安装 nodejs-lts 失败。"; return 1; }
+        if command -v node &>/dev/null; then return 0;
         else err "Node.js 在 Termux 中安装后仍未找到。"; return 1; fi
     fi
     if ! _request_sudo_privileges; then return 1; fi
     check_and_install_deps "curl" "gpg" || { err "安装Node.js需要curl和gpg(gnupg)，但安装失败。"; return 1; }
-    info "将使用 NodeSource 官方源进行安装..."
     if command -v apt-get &>/dev/null; then
-        $SUDO_CMD apt-get update; $SUDO_CMD apt-get install -y ca-certificates
-        info "正在配置 NodeSource apt 源..."; if [[ -n "$SUDO_CMD" ]]; then curl -fsSL "https://deb.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | $SUDO_CMD -E bash -; else curl -fsSL "https://deb.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | bash -; fi
-        info "正在安装 Node.js..."; $SUDO_CMD apt-get install -y nodejs
+        $SUDO_CMD apt-get update >/dev/null 2>&1; $SUDO_CMD apt-get install -y ca-certificates >/dev/null 2>&1
+        if [[ -n "$SUDO_CMD" ]]; then curl -fsSL "https://deb.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | $SUDO_CMD -E bash - >/dev/null 2>&1; else curl -fsSL "https://deb.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | bash - >/dev/null 2>&1; fi
+        $SUDO_CMD apt-get install -y nodejs >/dev/null 2>&1
     elif command -v yum &>/dev/null; then
-        info "正在配置 NodeSource yum 源..."; if [[ -n "$SUDO_CMD" ]]; then curl -fsSL "https://rpm.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | $SUDO_CMD -E bash -; else curl -fsSL "https://rpm.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | bash -; fi
-        info "正在安装 Node.js..."; $SUDO_CMD yum install -y nodejs
+        if [[ -n "$SUDO_CMD" ]]; then curl -fsSL "https://rpm.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | $SUDO_CMD -E bash - >/dev/null 2>&1; else curl -fsSL "https://rpm.nodesource.com/setup_${REQUIRED_NODE_VERSION}.x" | bash - >/dev/null 2>&1; fi
+        $SUDO_CMD yum install -y nodejs >/dev/null 2>&1
     else err "不支持的包管理器。请手动安装 Node.js v${MIN_NODE_VERSION} 或更高版本。"; return 1; fi
     if ! command -v node &>/dev/null; then err "Node.js 安装失败！请检查上面的错误信息。"; return 1; fi
     local new_version=$(node -v); local new_major_version=$(echo "$new_version" | sed 's/v//' | cut -d'.' -f1)
     if [[ "$new_major_version" -lt "$MIN_NODE_VERSION" ]]; then err "尝试安装后，Node.js 版本 ($new_version) 仍然过低！"; return 1; fi
-    success "Node.js 已成功安装/更新到版本: $new_version"; return 0
+    success "Node.js 已成功安装/更新。"; return 0
 }
 
+# [修改] 依赖检查静默化
 check_and_install_deps() {
     local required_deps=("$@")
     if [ ${#required_deps[@]} -eq 0 ]; then return 0; fi
-    info "正在检查所需依赖: ${required_deps[*]}..."
     if [[ -n "$TERMUX_VERSION" ]]; then
-        info "正在检查 Termux 包管理器状态..."
         local lock_file="/data/data/com.termux/files/usr/var/lib/dpkg/lock"; local lock_file_frontend="/data/data/com.termux/files/usr/var/lib/dpkg/lock-frontend"
         local max_wait_seconds=60; local count=0
         while fuser "$lock_file" >/dev/null 2>&1 || fuser "$lock_file_frontend" >/dev/null 2>&1; do
             if (( count >= max_wait_seconds )); then err "Termux 包管理器(apt/pkg)已被另一个进程锁定超过 ${max_wait_seconds} 秒。"; return 1; fi
-            warn "检测到另一个包管理进程正在运行，等待其完成... (${count}s / ${max_wait_seconds}s)"; sleep 1; ((count++))
-        done; success "包管理器已就绪。"
+            sleep 1; ((count++))
+        done
     fi
     local missing_deps=(); local pkg_manager=""; local sudo_cmd=""
     if [[ -n "$TERMUX_VERSION" ]]; then pkg_manager="pkg"
@@ -100,7 +95,7 @@ check_and_install_deps() {
         pkg_manager="yum"; if [[ "$EUID" -ne 0 ]]; then if ! command -v sudo >/dev/null; then err "需要 sudo 权限来安装依赖，但未找到 sudo 命令。"; return 1; fi; sudo_cmd="sudo"; fi
     else
         for dep in "${required_deps[@]}"; do if ! command -v "$dep" >/dev/null; then err "依赖 '$dep' 未找到。无法识别您的包管理器，请手动安装。"; return 1; fi; done
-        success "所有依赖项均已就绪。"; return 0
+        return 0
     fi
     for dep in "${required_deps[@]}"; do
         if [[ "$dep" == "dnsutils" ]] && (command -v "dig" >/dev/null || command -v "nslookup" >/dev/null) ; then continue; fi
@@ -108,8 +103,6 @@ check_and_install_deps() {
         elif ! command -v "$dep" &>/dev/null && [[ "$dep" != "termux-api" ]]; then missing_deps+=("$dep"); fi
     done
     if [ ${#missing_deps[@]} -gt 0 ]; then
-        warn "检测到以下依赖缺失: ${missing_deps[*]}"
-        info "正在尝试自动安装..."
         local packages_to_install=()
         for dep in "${missing_deps[@]}"; do
              case "$pkg_manager" in
@@ -122,18 +115,17 @@ check_and_install_deps() {
              esac
         done
         if [ ${#packages_to_install[@]} -gt 0 ]; then
-            info "将要执行: ${sudo_cmd}${pkg_manager} install -y ${packages_to_install[*]}"
             if [[ "$pkg_manager" == "apt-get" ]]; then
-                $sudo_cmd apt-get update; ${sudo_cmd}${pkg_manager} install -y -o Dpkg::Options::="--force-confnew" "${packages_to_install[@]}"
-            else ${sudo_cmd}${pkg_manager} install -y "${packages_to_install[@]}"; fi
+                $sudo_cmd apt-get update >/dev/null 2>&1
+                ${sudo_cmd}${pkg_manager} install -y -o Dpkg::Options::="--force-confnew" "${packages_to_install[@]}" >/dev/null 2>&1
+            else ${sudo_cmd}${pkg_manager} install -y "${packages_to_install[@]}" >/dev/null 2>&1; fi
         fi
         for dep in "${missing_deps[@]}"; do
             if [[ "$dep" == "dnsutils" ]] && (command -v "dig" >/dev/null || command -v "nslookup" >/dev/null) ; then continue; fi
             if [[ "$dep" == "termux-api" ]] && ! pkg list-installed termux-api | grep -q 'termux-api'; then err "依赖 'termux-api' 自动安装失败！"; return 1
             elif ! command -v "$dep" &>/dev/null && [[ "$dep" != "termux-api" ]]; then err "依赖 '$dep' 自动安装失败！"; return 1; fi
         done
-        success "所有缺失的依赖已安装成功。"
-    else success "所有依赖项均已就绪。"; fi
+    fi
     return 0
 }
 
@@ -287,7 +279,6 @@ manage_listening() {
                     info "已取消设置密码，网络监听保持关闭。"; return 1
                 fi
             fi
-            # [修改] 在开启监听后，自动关闭白名单模式
             sed -i "s/^\(listen:\s*\).*/\1true/" "$config_file"
             sed -i "s/^\(whitelistMode:\s*\).*/\1false/" "$config_file"
             success "网络监听已开启。"
@@ -353,9 +344,7 @@ handle_proxy_logic() {
     if [[ "$PROXY_ENABLED" == true ]]; then
         success "加速代理已启用。"
         if [[ -n "$TERMUX_VERSION" ]]; then
-            # 全自动强制换源逻辑
             local sources_list_file="$PREFIX/etc/apt/sources.list"
-            
             if [ -f "$sources_list_file" ] && grep -qE "tsinghua|ustc|bfsu|aliyun|cqu" "$sources_list_file"; then
                 success "检测到您已在使用国内镜像源，无需更换。"
                 info "正在刷新软件包列表..."
@@ -363,13 +352,9 @@ handle_proxy_logic() {
             else
                 warn "检测到非国内镜像，正在自动为您切换至清华大学镜像源..."
                 local tsinghua_mirror_line="deb https://mirrors.tuna.tsinghua.edu.cn/termux/termux-packages-24 stable main"
-                
-                # 备份原始文件
                 if [ -f "$sources_list_file" ]; then
                     cp "$sources_list_file" "$sources_list_file.bak-$(date +%F-%T)"
                 fi
-                
-                # 覆写为清华源
                 if echo "$tsinghua_mirror_line" > "$sources_list_file"; then
                     success "镜像源已自动切换至清华源。"
                     info "正在刷新软件包列表..."
@@ -410,14 +395,28 @@ check_st_running() {
 
 update_script() {
     handle_proxy_logic || return 1
-    check_and_install_deps "curl" "dnsutils" || return 1; info "正在检查脚本更新...";
-    local raw_host="raw.githubusercontent.com"; local proxy_domain=$(echo "$PROXY_URL" | cut -d'/' -f3); local curl_opts="-sLk --connect-timeout 8"
-    resolve_host() { local host_to_resolve=$1; local resolved_ip=""; for dns in "1.1.1.1" "8.8.8.8" "114.114.114.114" "223.5.5.5"; do if command -v dig &> /dev/null; then resolved_ip=$(dig @${dns} +short A ${host_to_resolve} | head -1); elif command -v nslookup &> /dev/null; then resolved_ip=$(nslookup ${host_to_resolve} ${dns} | awk '/^Address: / { print $2 }' | tail -n 1); fi; if [[ -n "$resolved_ip" && "$resolved_ip" != "can't" && "$resolved_ip" != "find" ]]; then curl_opts="${curl_opts} --resolve ${host_to_resolve}:443:${resolved_ip}"; return 0; fi; done; return 1; }; resolve_host "$raw_host"; resolve_host "$proxy_domain"
-    local raw_url="https://${raw_host}/Akane328/akane-st-manage/main/${SCRIPT_NAME}"; local proxy_url="${PROXY_URL}${raw_url}"; local timestamp="?t=$(date +%s)"; local urls_to_try=("${raw_url}${timestamp}" "${proxy_url}${timestamp}"); local remote_script_content=""; local successful_url=""
-    for url in "${urls_to_try[@]}"; do remote_script_content=$(curl ${curl_opts} "$url"); if [[ -n "$remote_script_content" && "$remote_script_content" == *'#!/bin/bash'* ]]; then successful_url="$url"; break; fi; done
-    if [[ -z "$successful_url" ]]; then err "所有更新路径均尝试失败，无法检查更新。"; return 1; fi
-    local remote_version; remote_version=$(echo "$remote_script_content" | grep 'SCRIPT_VERSION=' | head -1 | sed -e 's/.*"\(.*\)"/\1/' -e 's/\r//g' | xargs); if [[ -z "$remote_version" ]]; then err "无法从远程脚本解析版本号。"; return 1; fi
-    local local_version=$(grep 'SCRIPT_VERSION=' "$0" | head -1 | sed -e 's/.*"\(.*\)"/\1/' -e 's/\r//g' | xargs); info "远程版本: ${remote_version}"
+    check_and_install_deps "curl" || return 1
+    info "正在检查脚本更新..."
+    local repo_path="Akane328/akane-st-manage"; local branch="main"; local timestamp="?t=$(date +%s)"; local curl_opts="-sLk --connect-timeout 10"
+    local urls_to_try=(
+        "https://raw.githubusercontent.com/${repo_path}/${branch}/${SCRIPT_NAME}${timestamp}"
+        "https://fastly.jsdelivr.net/gh/${repo_path}@${branch}/${SCRIPT_NAME}${timestamp}"
+        "https://ghproxy.com/https://raw.githubusercontent.com/${repo_path}/${branch}/${SCRIPT_NAME}${timestamp}"
+        "${PROXY_URL}https://raw.githubusercontent.com/${repo_path}/${branch}/${SCRIPT_NAME}${timestamp}"
+    )
+    local remote_script_content=""; local successful_url=""
+    for url in "${urls_to_try[@]}"; do
+        info "正在尝试从源下载: $(echo "$url" | cut -d'/' -f3)..."
+        remote_script_content=$(curl ${curl_opts} "$url")
+        if [[ -n "$remote_script_content" && "$remote_script_content" == *'#!/bin/bash'* ]]; then
+            success "从源 $(echo "$url" | cut -d'/' -f3) 获取脚本成功！"
+            successful_url="$url"; break
+        fi
+    done
+    if [[ -z "$successful_url" ]]; then err "所有更新源均尝试失败，无法检查更新。请检查您的网络连接。"; return 1; fi
+    local remote_version; remote_version=$(echo "$remote_script_content" | grep 'SCRIPT_VERSION=' | head -1 | sed -e 's/.*"\(.*\)"/\1/' -e 's/\r//g' | xargs)
+    if [[ -z "$remote_version" ]]; then err "无法从远程脚本解析版本号。"; return 1; fi
+    local local_version; local_version=$(grep 'SCRIPT_VERSION=' "$0" | head -1 | sed -e 's/.*"\(.*\)"/\1/' -e 's/\r//g' | xargs); info "远程版本: ${remote_version}"
     if [[ -z "$local_version" ]]; then
         warn "无法检测到当前脚本的本地版本号。"; read -rp "是否要强制更新到最新版本 (${remote_version})? (Y/n): " yn
         if [[ "$yn" =~ ^[Nn]$ ]]; then info "已取消更新。"; return; fi
@@ -428,7 +427,9 @@ update_script() {
         warn "发现新版本 (${remote_version})！"; read -rp "是否立即更新? (Y/n): " yn
         if [[ "$yn" =~ ^[Nn]$ ]]; then info "已取消更新。"; return; fi
     fi
-    info "正在下载最新脚本..."; if curl ${curl_opts} -o "$0.tmp" "$successful_url" && mv "$0.tmp" "$0"; then chmod +x "$0"; success "脚本更新成功！"; info "脚本将在2秒后自动重新启动以应用更新..."; sleep 2; exec bash "$0" "$@"; else err "下载最新脚本失败！"; rm -f "$0.tmp"; fi
+    info "正在下载最新脚本..."; if echo "$remote_script_content" > "$0.tmp" && mv "$0.tmp" "$0"; then
+        chmod +x "$0"; success "脚本更新成功！"; info "脚本将在2秒后自动重新启动以应用更新..."; sleep 2; exec bash "$0" "$@";
+    else err "写入最新脚本失败！"; rm -f "$0.tmp"; fi
 }
 
 show_start_message() {
@@ -539,37 +540,64 @@ uninstall_sillytavern() {
     else info "操作已取消。"; fi
 }
 
-quick_restart() {
-    [[ "$(get_local_st_ver)" == "未安装" ]] && { err "SillyTavern 未安装，无法重启。"; return; }
+# [修改] 启动逻辑变更
+manage_start_or_restart() {
+    [[ "$(get_local_st_ver)" == "未安装" ]] && { err "SillyTavern 未安装，无法操作。"; return; }
+    
     local method=$(get_running_method)
-    case "$method" in
-        "systemd")
-            info "检测到以 Systemd 方式运行，正在重启..."
+
+    if [[ "$method" != "stopped" ]]; then
+        info "检测到服务正在以 ${method} 方式运行，即将重启..."
+        case "$method" in
+            "systemd")
+                if ! _request_sudo_privileges; then return 1; fi
+                $SUDO_CMD systemctl restart "$SERVICE_NAME"
+                sleep 2
+                if $SUDO_CMD systemctl is-active --quiet "$SERVICE_NAME"; then success "服务重启成功。"; else err "服务重启失败！请使用'详细启动管理'中的日志功能查看原因。"; fi
+                ;;
+            "screen")
+                info "正在停止旧服务..."
+                if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-unlock; fi
+                screen -X -S "$SCREEN_NAME" quit
+                sleep 2
+                info "正在启动新服务..."
+                if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-lock; fi
+                screen -dmS "$SCREEN_NAME" bash -c "cd '$ST_DIR' && bash ./start.sh"
+                sleep 2
+                if screen -list | grep -q "\.$SCREEN_NAME"; then success "服务重启成功。"; else err "服务重启失败！"; fi
+                ;;
+            "foreground")
+                 warn "检测到酒馆正在前台运行 (可能在另一个终端窗口)。"
+                 warn "本脚本无法重启前台进程，请手动到其窗口按 Ctrl+C 停止后，再用本脚本启动。"
+                 ;;
+        esac
+    else
+        info "服务当前未运行，即将启动..."
+        local service_enabled=false
+        if [[ -z "$TERMUX_VERSION" ]] && [[ -f "$SERVICE_FILE" ]] && systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+            service_enabled=true
+        fi
+
+        if [[ "$service_enabled" == true ]]; then
+            info "检测到已配置 Systemd 自启，将使用 Systemd 启动..."
             if ! _request_sudo_privileges; then return 1; fi
-            $SUDO_CMD systemctl restart "$SERVICE_NAME"
+            $SUDO_CMD systemctl start "$SERVICE_NAME"
             sleep 2
-            if $SUDO_CMD systemctl is-active --quiet "$SERVICE_NAME"; then success "服务重启成功。"; else err "服务重启失败！请使用'启动/停止'菜单中的日志功能查看原因。"; fi
-            ;;
-        "screen")
-            info "检测到以 Screen 方式运行，正在重启..."
-            info "正在停止旧服务..."
-            if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-unlock; fi
-            screen -X -S "$SCREEN_NAME" quit
-            sleep 2
-            info "正在启动新服务..."
-            if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-lock; fi
-            screen -dmS "$SCREEN_NAME" bash -c "cd '$ST_DIR' && bash ./start.sh"
-            sleep 2
-            if screen -list | grep -q "\.$SCREEN_NAME"; then success "服务重启成功。"; else err "服务重启失败！"; fi
-            ;;
-        "foreground")
-            warn "检测到酒馆正在前台运行 (可能在另一个终端窗口)。"
-            warn "本脚本无法重启前台进程，请手动到其窗口按 Ctrl+C 停止后，再用本脚本启动。"
-            ;;
-        "stopped")
-            err "酒馆当前未运行，无法重启。请先从'启动/停止'菜单中启动它。"
-            ;;
-    esac
+            if $SUDO_CMD systemctl is-active --quiet "$SERVICE_NAME"; then
+                success "服务已通过 Systemd 启动。"
+                show_start_message
+            else
+                err "Systemd 服务启动失败！请使用'详细启动管理'中的日志功能查看原因。"
+            fi
+        else
+            # [修改] 如果没有配置systemd，则使用前台方式启动
+            info "将使用前台方式启动..."
+            show_start_message
+            warn "按 Ctrl+C 停止。"
+            # 直接执行，这将使脚本在此处阻塞，直到用户手动停止
+            (cd "$ST_DIR" && bash ./start.sh)
+        fi
+    fi
 }
 
 config_menu() {
@@ -593,7 +621,7 @@ config_menu() {
             0) 
                 if [[ "$config_changed" == true ]]; then
                     info "检测到配置已更改，将为您自动重启服务以应用设置..."
-                    quick_restart
+                    manage_start_or_restart
                 fi
                 return
                 ;;
@@ -610,26 +638,23 @@ config_menu() {
 }
 
 start_menu() {
-    local deps=("screen" "jq")
-    [[ -n "$TERMUX_VERSION" ]] && deps+=("termux-api")
-    check_and_install_deps "${deps[@]}" || return 1
     [[ "$(get_local_st_ver)" == "未安装" ]] && { err "请先安装SillyTavern。"; return; }
 
     local screen_is_running=false; screen -list | grep -q "\.$SCREEN_NAME" && screen_is_running=true
     
-    clear; echo -e "${CYAN}--- 启动管理 ---${NC}"
-    echo -e "  ${GREEN}1)${NC} 前台启动\n  ${GREEN}2)${NC} 启动 Screen 后台服务\n  ${GREEN}3)${NC} 查看 Screen 日志\n  ${RED}4)${NC} 停止 Screen 服务\n"
+    clear; echo -e "${CYAN}--- 详细启动管理 ---${NC}"
+    echo -e "  ${GREEN}1)${NC} 前台启动 (用于调试)\n  ${GREEN}2)${NC} 启动 Screen 后台服务\n  ${GREEN}3)${NC} 查看 Screen 日志\n  ${RED}4)${NC} 停止 Screen 服务\n"
     
-    echo -e "${CYAN}--- 自启管理 ---${NC}"
+    echo -e "${CYAN}--- 自启管理 (Systemd) ---${NC}"
     if [[ -n "$TERMUX_VERSION" ]]; then
         echo -e "  ${BLUE}5)${NC} (开机自启功能不适用于Termux)"
         echo -e "  ${BLUE}6)${NC} (Systemd日志功能不适用于Termux)\n"
     else
         local service_enabled=false; [[ -f "$SERVICE_FILE" ]] && systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null && service_enabled=true
         if [[ "$service_enabled" == true ]]; then
-            echo -e "  ${RED}5)${NC} 取消开机自启 (Systemd)"
+            echo -e "  ${RED}5)${NC} 取消开机自启"
         else
-            echo -e "  ${GREEN}5)${NC} 设置开机自启 (Systemd)"
+            echo -e "  ${GREEN}5)${NC} 设置开机自启"
         fi
         echo -e "  ${BLUE}6)${NC} 查看 Systemd 日志\n"
     fi
@@ -638,8 +663,8 @@ start_menu() {
     read -rp "请选择操作: " choice
     case "$choice" in
         1) show_start_message; info "启动 SillyTavern (前台)..."; warn "按 Ctrl+C 停止。"; (cd "$ST_DIR" && bash ./start.sh);;
-        2) if [[ "$screen_is_running" == true ]]; then err "Screen服务已在运行。"; else info "正在后台启动..."; if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-lock; fi; screen -dmS "$SCREEN_NAME" bash -c "cd '$ST_DIR' && bash ./start.sh"; sleep 1; if screen -list | grep -q "\.$SCREEN_NAME"; then success "Screen服务已启动。"; show_start_message; else err "Screen服务启动失败。"; fi; fi;;
-        3) if [[ "$screen_is_running" == true ]]; then info "正在附加... Ctrl+A, D 分离。"; screen -r "$SCREEN_NAME"; else err "Screen服务未运行。"; fi;;
+        2) if [[ "$screen_is_running" == true ]]; then err "Screen服务已在运行。"; else info "正在后台启动..."; if [[ -n "$TERMUX_VERSION" ]]; then check_and_install_deps "termux-api" || return 1; termux-wake-lock; fi; check_and_install_deps "screen" || return 1; screen -dmS "$SCREEN_NAME" bash -c "cd '$ST_DIR' && bash ./start.sh"; sleep 1; if screen -list | grep -q "\.$SCREEN_NAME"; then success "Screen服务已启动。"; show_start_message; else err "Screen服务启动失败。"; fi; fi;;
+        3) check_and_install_deps "screen" || return 1; if [[ "$screen_is_running" == true ]]; then info "正在附加... Ctrl+A, D 分离。"; screen -r "$SCREEN_NAME"; else err "Screen服务未运行。"; fi;;
         4) if [[ "$screen_is_running" == true ]]; then info "正在停止后台服务..."; if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-unlock; fi; screen -X -S "$SCREEN_NAME" quit; success "Screen服务已停止。"; else err "Screen服务未运行。"; fi;;
         5)
             if [[ -n "$TERMUX_VERSION" ]]; then
@@ -715,8 +740,8 @@ backup_menu() {
     done
 }
 
+# [修改] 依赖检查静默化
 initial_setup_check() {
-    info "正在进行环境预检..."
     local deps_ok=true
     local essential_deps=("git" "curl" "jq" "screen")
     [[ -n "$TERMUX_VERSION" ]] && essential_deps+=("termux-api")
@@ -731,40 +756,65 @@ initial_setup_check() {
             if [[ "$major_version" -lt 18 ]]; then deps_ok=false; fi
         else deps_ok=false; fi
     fi
-    if [[ "$deps_ok" == true ]]; then success "环境完整，无需初始化。"; return 0; fi
+    if [[ "$deps_ok" == true ]]; then return 0; fi
 
-    echo; warn "首次运行或环境不完整，需要进行初始化设置。"; info "此过程将安装或更新运行本脚本及SillyTavern所需的核心组件。"; echo
-    handle_proxy_logic || { err "Termux 镜像源配置失败，初始化中断。"; exit 1; }
+    warn "首次运行或环境不完整，将自动进行初始化配置..."
+    handle_proxy_logic || { err "代理或镜像源配置失败，初始化中断。"; exit 1; }
     install_or_update_nodejs || { err "Node.js 环境配置失败，无法继续。"; exit 1; }
     check_and_install_deps "${essential_deps[@]}" || { err "基础依赖安装失败，无法继续。"; exit 1; }
-    echo; success "所有依赖已配置完毕！"; info "正在进入主菜单..."; sleep 2
+    success "初始化配置完成！"
+    sleep 1
 }
 
 main_menu() {
     while true; do
-        local st_ver; st_ver=$(get_local_st_ver); local st_status=""; [[ "$st_ver" != "未安装" ]] && st_status=$(check_st_running);
+        local st_ver; st_ver=$(get_local_st_ver)
+        local st_status_text; st_status_text=$(check_st_running)
+        local st_status_code; st_status_code=$(get_running_method)
+
+        local start_restart_text="启动服务"
+        if [[ "$st_status_code" != "stopped" ]]; then
+            start_restart_text="重启服务"
+        fi
+        
         clear; echo -e "${CYAN}==================================================${NC}"
         echo -e "${WHITE}\n    ___    __ __ ___    _   ________\n   /   |  / //_//   |  / | / / ____/\n  / /| | / ,<  / /| | /  |/ / **/   \n / | |/ /| |/   |/ /|  / /**_   \n/_/  |_/_/ |_/_/  |_/_/ |_/_____/   \n${WHITE}           SillyTavern酒馆管理脚本            ${NC}"
         echo -e "                                     ${CYAN}v${SCRIPT_VERSION}${NC}\n${WHITE}作者：${AUTHOR}            更新日期:${UPDATE_DATE}${NC}\n${WHITE}${CONTACT_INFO_LINE1}${NC}\n${WHITE}${CONTACT_INFO_LINE2}${NC}"
         echo -e "${CYAN}==================================================${NC}"
         
-        echo -e "${WHITE}SillyTavern 状态: ${GREEN}${st_ver}${NC} ${st_status}"
+        echo -e "${WHITE}SillyTavern 状态: ${GREEN}${st_ver}${NC} ${st_status_text}"
         display_access_urls
 
-        echo -e "${CYAN}--------------------------------------------------${NC}\n  ${GREEN}1)${NC} 安装 / 更新\n  ${GREEN}2)${NC} 启动 / 停止 / 自启管理\n  ${YELLOW}3)${NC} 酒馆配置管理\n  ${BLUE}4)${NC} 备份管理\n  ${CYAN}5)${NC} 快速重启服务\n  ${RED}6)${NC} 卸载SillyTavern\n\n  ${CYAN}9)${NC} 检查脚本更新\n  ${WHITE}0)${NC} 退出\n${CYAN}==================================================${NC}"
+        echo -e "${CYAN}--------------------------------------------------${NC}"
+        echo -e "  ${CYAN}5)${NC} ${start_restart_text}\n"
+        echo -e "  ${GREEN}1)${NC} 安装 / 更新"
+        echo -e "  ${GREEN}2)${NC} 详细启动管理"
+        echo -e "  ${YELLOW}3)${NC} 酒馆配置管理"
+        echo -e "  ${BLUE}4)${NC} 备份管理"
+        echo -e "  ${RED}6)${NC} 卸载SillyTavern\n"
+        echo -e "  ${CYAN}9)${NC} 检查脚本更新"
+        echo -e "  ${WHITE}0)${NC} 退出\n${CYAN}==================================================${NC}"
         read -rp "请选择操作 [0-9]: " opt
         case "$opt" in
             1) manage_sillytavern ;;
             2) start_menu ;;
             3) config_menu ;;
             4) backup_menu ;;
-            5) quick_restart ;;
+            5) manage_start_or_restart ;;
             6) uninstall_sillytavern ;;
             9) update_script ;;
             0) exit 0 ;;
             *) err "无效选项，请重试。" ;;
         esac
-        if [[ "$opt" != "0" && "$opt" != "3" ]]; then echo ""; read -n1 -s -r -p "按任意键返回主菜单..."; fi
+        # 如果是前台启动，脚本会阻塞，直到Ctrl+C，之后会回到这里
+        if [[ "$opt" != "0" && "$opt" != "3" && "$opt" != "2" && "$opt" != "4" ]]; then
+             if [[ "$opt" == "5" && "$(get_running_method)" == "foreground" ]]; then
+                # 如果是刚刚从前台启动(Ctrl+C)退出的, 不显示“按任意键”
+                :
+             else
+                echo ""; read -n1 -s -r -p "按任意键返回主菜单..."
+             fi
+        fi
     done
 }
 
