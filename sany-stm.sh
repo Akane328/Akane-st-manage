@@ -11,12 +11,12 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-4"
+UPDATE_DATE="2025-08-15"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.17" # 版本号提升
+SCRIPT_VERSION="1.18" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
-AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" # 唯一的自启块ID
+AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}"
 
 # ==== 颜色定义 ====
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m';
@@ -350,9 +350,15 @@ handle_proxy_logic() {
     if [[ "$PROXY_ENABLED" == true ]]; then
         success "加速代理已启用。"
         if [[ -n "$TERMUX_VERSION" ]]; then
-            info "检测到Termux环境，正在处理镜像源问题..."
-            if ! pkg update -y >/dev/null 2>&1; then
-                warn "您当前的Termux镜像源似乎已失效或无法访问。"
+            # [修正] 强制换源逻辑
+            # 首先检查是否已经在使用国内镜像
+            if grep -qE "tsinghua|ustc|bfsu|aliyun|cqu" "$PREFIX/etc/apt/sources.list" 2>/dev/null; then
+                success "检测到您已在使用国内镜像源，无需更换。"
+                info "正在刷新软件包列表..."
+                pkg update -y || warn "刷新软件包列表失败，您的网络或镜像源可能仍有问题。"
+            else
+                # 如果没有使用国内镜像，则强制更换
+                warn "为确保最佳下载速度，将为您切换到国内镜像源。"
                 info "即将为您调用官方的镜像更换工具..."
                 warn "请在接下来的菜单中选择一个位于中国的镜像（如Tsinghua, USTC等）。"
                 warn "使用方向键移动，空格键选择，回车键确认。"
@@ -367,8 +373,6 @@ handle_proxy_logic() {
                     return 1
                 fi
                 success "Termux镜像源配置成功并已更新！"
-            else
-                success "Termux镜像源可用，无需更换。"
             fi
         fi
     fi
@@ -503,9 +507,7 @@ _cleanup_termux_autostart() {
     if [[ -n "$TERMUX_VERSION" ]] && [ -f "$HOME/.bashrc" ]; then
         if grep -q "${AUTOSTART_BLOCK_ID}" "$HOME/.bashrc"; then
             info "正在清理 Termux (.bashrc) 中残留的自启配置..."
-            # 使用 sed 删除整个块
             sed -i.bak "/${AUTOSTART_BLOCK_ID}/,/${AUTOSTART_BLOCK_ID}/d" "$HOME/.bashrc"
-            # 清理可能留下的多余空行
             sed -i '/^$/N;/^\n$/D' "$HOME/.bashrc"
             success "旧的自启配置已清理。"
         fi
@@ -520,9 +522,9 @@ uninstall_sillytavern() {
         info "正在停止所有相关服务..."; screen -X -S "$SCREEN_NAME" quit 2>/dev/null
         if [[ -f "$SERVICE_FILE" ]]; then if ! _request_sudo_privileges; then err "无法获取sudo权限，无法停止或禁用systemd服务。"; else $SUDO_CMD systemctl stop "$SERVICE_NAME" 2>/dev/null; $SUDO_CMD systemctl disable "$SERVICE_NAME" 2>/dev/null; fi; fi
         info "正在删除 SillyTavern 目录: $ST_DIR"; rm -rf "$ST_DIR"; 
-        info "正在清理相关服务文件和自启配置..." # 明确告知用户
+        info "正在清理相关服务文件和自启配置..."
         if [[ -f "$SERVICE_FILE" ]]; then if _request_sudo_privileges; then $SUDO_CMD rm -f "$SERVICE_FILE"; $SUDO_CMD systemctl daemon-reload; fi; fi
-        _cleanup_termux_autostart # 确保调用清理函数
+        _cleanup_termux_autostart
         success "SillyTavern 已被彻底卸载。"
     else info "操作已取消。"; fi
 }
@@ -610,7 +612,6 @@ start_menu() {
     
     echo -e "${CYAN}--- 自启管理 ---${NC}"
     if [[ -n "$TERMUX_VERSION" ]]; then
-        # [移除] 不再提供Termux的自启选项
         echo -e "  ${BLUE}5)${NC} (开机自启功能不适用于Termux)"
         echo -e "  ${BLUE}6)${NC} (Systemd日志功能不适用于Termux)\n"
     else
@@ -632,7 +633,6 @@ start_menu() {
         4) if [[ "$screen_is_running" == true ]]; then info "正在停止后台服务..."; if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-unlock; fi; screen -X -S "$SCREEN_NAME" quit; success "Screen服务已停止。"; else err "Screen服务未运行。"; fi;;
         5)
             if [[ -n "$TERMUX_VERSION" ]]; then
-                # [移除] 不再提供Termux的自启功能
                 err "自启功能 (Systemd) 仅适用于标准Linux系统，不适用于Termux。"
             else
                 if ! _request_sudo_privileges; then return 1; fi
@@ -731,7 +731,6 @@ initial_setup_check() {
 }
 
 main_menu() {
-    # [移除] 不再在执行脚本时自动启动服务
     while true; do
         local st_ver; st_ver=$(get_local_st_ver); local st_status=""; [[ "$st_ver" != "未安装" ]] && st_status=$(check_st_running);
         clear; echo -e "${CYAN}==================================================${NC}"
