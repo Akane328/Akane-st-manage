@@ -11,12 +11,12 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-11"
+UPDATE_DATE="2025-08-12"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.14" 
+SCRIPT_VERSION="1.15" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
-AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" 
+AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" # 唯一的自启块ID
 
 # ==== 颜色定义 ====
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m';
@@ -182,7 +182,6 @@ _ensure_config_exists() {
     return 0
 }
 
-# [修正] 重写此函数，确保稳定性和准确性
 _get_st_config_value() {
     local key="$1"
     local config_file="$ST_DIR/config.yaml"
@@ -205,7 +204,7 @@ manage_port() {
     local current_port=$(_get_st_config_value "port")
     info "当前服务端口为: ${GREEN}${current_port}${NC}"
     read -rp "请输入新的端口号 (1024-65535)，留空则不修改: " new_port
-    if [[ -z "$new_port" ]]; then info "端口未修改。"; return 0; fi
+    if [[ -z "$new_port" ]]; then info "端口未修改。"; return 1; fi # 返回1表示未修改
     if [[ "$new_port" =~ ^[0-9]+$ && "$new_port" -ge 1024 && "$new_port" -le 65535 ]]; then
         sed -i "s/^\(port:\s*\).*/\1${new_port}/" "$config_file"
         success "端口已成功修改为: ${GREEN}${new_port}${NC}"
@@ -261,7 +260,7 @@ manage_listening() {
             return 0
         else
             info "操作已取消，监听状态未改变。"
-            return 1 # 表示未做修改
+            return 1 
         fi
     else
         local prompt_text
@@ -326,9 +325,15 @@ manage_sillytavern() {
         
         echo; info "安装已完成，现在开始进行首次配置..."
         _ensure_config_exists || return 1
-        manage_port
-        manage_listening
-        info "首次配置完成！如有修改，建议重启服务使其生效。"
+        local config_modified=false
+        manage_port || true
+        [[ $? -eq 0 ]] && config_modified=true
+        manage_listening || true
+        [[ $? -eq 0 ]] && config_modified=true
+        info "首次配置完成！"
+        if [[ "$config_modified" == true ]]; then
+            warn "您的配置已修改，建议从主菜单重启服务使其生效。"
+        fi
     fi
     if [[ "$EUID" -eq 0 && -n "$SUDO_USER" ]]; then chown -R "$SUDO_USER:${SUDO_GID:-$SUDO_USER}" "$ST_DIR"; success "文件权限修正完成！"; fi
 }
@@ -358,6 +363,7 @@ handle_proxy_logic() {
 get_local_st_ver() { [ -f "$ST_DIR/package.json" ] && jq -r .version "$ST_DIR/package.json" || echo "未安装"; }
 
 get_running_method() {
+    if [[ -n "$TERMUX_VERSION" ]]; then screen -wipe >/dev/null 2>&1; fi
     if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then echo "systemd"; return; fi
     if screen -list | grep -q "\.$SCREEN_NAME"; then echo "screen"; return; fi
     if pgrep -f "$ST_DIR/start.sh" >/dev/null || pgrep -f "$ST_DIR/server.js" >/dev/null; then echo "foreground"; return; fi
@@ -550,9 +556,9 @@ config_menu() {
         
         local modified=false
         case "$choice" in
-            1) manage_listening && modified=true ;;
+            1) manage_listening || modified=false; modified=true ;;
             2) manage_password && modified=true ;;
-            3) manage_port && modified=true ;;
+            3) manage_port || modified=false; modified=true ;;
             0) 
                 if [[ "$config_changed" == true ]]; then
                     info "检测到配置已更改，将为您自动重启服务以应用设置..."
@@ -619,16 +625,23 @@ start_menu() {
                     success "'打开App时自启' 已被取消。"
                 else
                     info "正在配置 '打开App时自启'..."
+                    # [修正] 增加 screen -wipe 来清理僵尸会话，确保自启可靠性
                     cat <<EOF >> "$HOME/.bashrc"
 
 ${AUTOSTART_BLOCK_ID}
 # This block is managed by sany-stm.sh, do not edit manually.
-if command -v screen &> /dev/null && ! screen -list | grep -q "\.${SCREEN_NAME}"; then
-    (
-      termux-wake-lock
-      echo "SillyTavern is not running, starting it in the background..."
-      screen -dmS "${SCREEN_NAME}" bash -c "cd '${ST_DIR}' && bash ./start.sh"
-    ) &
+if command -v screen &> /dev/null; then
+    # Clean up any dead screen sessions first to prevent startup failure
+    screen -wipe >/dev/null 2>&1
+    
+    # Check if the service is NOT running, then start it
+    if ! screen -list | grep -q "\.${SCREEN_NAME}"; then
+        (
+          termux-wake-lock
+          echo "SillyTavern not running, starting automatically in background..."
+          screen -dmS "${SCREEN_NAME}" bash -c "cd '${ST_DIR}' && bash ./start.sh"
+        ) &
+    fi
 fi
 ${AUTOSTART_BLOCK_ID}
 EOF
