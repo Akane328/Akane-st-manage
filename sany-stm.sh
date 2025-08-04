@@ -14,7 +14,7 @@ AUTHOR="三月"
 UPDATE_DATE="2025-08-16"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.19" # 版本号提升
+SCRIPT_VERSION="1.18" 
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}"
 
@@ -52,7 +52,6 @@ install_or_update_nodejs() {
             warn "当前 Node.js 版本 ($current_version)过旧，需要 >= v${MIN_NODE_VERSION}。"
             info "正在尝试升级到 Node.js v${REQUIRED_NODE_VERSION}..."
         else
-            success "Node.js 版本 ($current_version) 符合要求 (>= v${MIN_NODE_VERSION})。"
             return 0
         fi
     fi
@@ -171,7 +170,6 @@ _ensure_config_exists() {
     local example_config_file="$ST_DIR/config.yaml.example"
     if [ ! -f "$config_file" ]; then
         if [ -f "$example_config_file" ]; then
-            info "未找到 config.yaml，将从 config.yaml.example 创建。"
             cp "$example_config_file" "$config_file"
             return 0
         else
@@ -218,7 +216,6 @@ manage_port() {
 manage_password() {
     _ensure_config_exists || return 1
     local config_file="$ST_DIR/config.yaml"
-    info "即将设置或修改登录凭据。"
     local username
     while true; do
         read -rp "请输入新的用户名: " username
@@ -240,7 +237,7 @@ manage_password() {
     sed -i "/^\s*password:/c\  password: \"${password}\"" "$config_file"
     sed -i "s/^\(basicAuthMode:\s*\).*/\1true/" "$config_file"
     
-    success "用户凭据设置成功！登录认证已自动开启 (basicAuthMode: true)。"
+    success "用户凭据设置成功！登录认证已开启。"
     return 0
 }
 
@@ -252,7 +249,7 @@ manage_listening() {
     
     if [[ "$is_listening" == "true" ]]; then
         local yn
-        echo -en "${WHITE}网络监听当前为 ${GREEN}开启${NC}${WHITE}状态，是否要将其关闭 (仅限本机访问)? [Y/n]: ${NC}"
+        echo -en "${WHITE}网络监听当前为 ${GREEN}开启${NC}${WHITE}状态，是否要将其关闭 (关闭后仅限本机访问)? [Y/n]: ${NC}"
         read -r yn
         if [[ ! "$yn" =~ ^[Nn]$ ]]; then
             sed -i "s/^\(listen:\s*\).*/\1false/" "$config_file"
@@ -264,7 +261,7 @@ manage_listening() {
         fi
     else
         local prompt_text
-        if [[ -n "$TERMUX_VERSION" ]]; then prompt_text="是否要开启网络监听以允许其他设备访问? [y/N]: "; else prompt_text="是否要开启网络监听？ [Y/n]: "; fi
+        if [[ -n "$TERMUX_VERSION" ]]; then prompt_text="是否要开启网络监听以允许其他设备访问(开启后可公网访问)? [y/N]: "; else prompt_text="是否要开启网络监听？ [Y/n]: "; fi
         
         local yn
         read -rp "$prompt_text" yn
@@ -274,7 +271,7 @@ manage_listening() {
         
         if [[ "$proceed" == "true" ]]; then
             if [[ "$is_auth_enabled" == "false" ]]; then
-                warn "安全警告：开启网络监听前，必须设置登录密码！"
+                warn "开启网络监听前，请先设置登录密码！"
                 read -rp "是否立即设置用户名和密码? (选择'n'将取消开启监听) [Y/n]: " set_pass_now
                 if [[ ! "$set_pass_now" =~ ^[Nn]$ ]]; then
                     if manage_password; then
@@ -330,7 +327,7 @@ manage_sillytavern() {
         manage_listening; if [[ $? -eq 0 ]]; then config_modified=true; fi
         info "首次配置完成！"
         if [[ "$config_modified" == true ]]; then
-            warn "您的配置已修改，建议从主菜单重启服务使其生效。"
+            warn "您的配置已修改，重启服务后生效。"
         fi
     fi
     if [[ "$EUID" -eq 0 && -n "$SUDO_USER" ]]; then chown -R "$SUDO_USER:${SUDO_GID:-$SUDO_USER}" "$ST_DIR"; success "文件权限修正完成！"; fi
