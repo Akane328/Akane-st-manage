@@ -11,10 +11,10 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-15"
+UPDATE_DATE="2025-08-16"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.18" # 版本号提升
+SCRIPT_VERSION="1.19" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}"
 
@@ -350,29 +350,36 @@ handle_proxy_logic() {
     if [[ "$PROXY_ENABLED" == true ]]; then
         success "加速代理已启用。"
         if [[ -n "$TERMUX_VERSION" ]]; then
-            # [修正] 强制换源逻辑
-            # 首先检查是否已经在使用国内镜像
-            if grep -qE "tsinghua|ustc|bfsu|aliyun|cqu" "$PREFIX/etc/apt/sources.list" 2>/dev/null; then
+            # [修正] 全自动强制换源逻辑
+            local sources_list_file="$PREFIX/etc/apt/sources.list"
+            
+            if [ -f "$sources_list_file" ] && grep -qE "tsinghua|ustc|bfsu|aliyun|cqu" "$sources_list_file"; then
                 success "检测到您已在使用国内镜像源，无需更换。"
                 info "正在刷新软件包列表..."
                 pkg update -y || warn "刷新软件包列表失败，您的网络或镜像源可能仍有问题。"
             else
-                # 如果没有使用国内镜像，则强制更换
-                warn "为确保最佳下载速度，将为您切换到国内镜像源。"
-                info "即将为您调用官方的镜像更换工具..."
-                warn "请在接下来的菜单中选择一个位于中国的镜像（如Tsinghua, USTC等）。"
-                warn "使用方向键移动，空格键选择，回车键确认。"
-                read -n1 -s -r -p "按任意键以继续..."
+                warn "检测到非国内镜像，正在自动为您切换至清华大学镜像源..."
+                local tsinghua_mirror_line="deb https://mirrors.tuna.tsinghua.edu.cn/termux/termux-packages-24 stable main"
                 
-                termux-change-repo
+                # 备份原始文件
+                if [ -f "$sources_list_file" ]; then
+                    cp "$sources_list_file" "$sources_list_file.bak-$(date +%F-%T)"
+                fi
                 
-                info "镜像更换操作完成，正在验证..."
-                if ! pkg update -y; then
-                    err "更换镜像后更新软件包列表依然失败！"
-                    err "请检查您的网络连接，或重新运行脚本并选择另一个镜像。"
+                # 覆写为清华源
+                if echo "$tsinghua_mirror_line" > "$sources_list_file"; then
+                    success "镜像源已自动切换至清华源。"
+                    info "正在刷新软件包列表..."
+                    if pkg update -y; then
+                        success "软件包列表已成功更新。"
+                    else
+                        err "更换镜像后更新软件包列表失败！请检查网络连接。"
+                        return 1
+                    fi
+                else
+                    err "写入新的镜像源配置失败！请检查文件权限。"
                     return 1
                 fi
-                success "Termux镜像源配置成功并已更新！"
             fi
         fi
     fi
