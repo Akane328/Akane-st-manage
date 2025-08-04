@@ -11,12 +11,12 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-06"
+UPDATE_DATE="2025-08-11"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.09" # 版本号提升
+SCRIPT_VERSION="1.14" 
 SCRIPT_NAME="sany-stm.sh"
-AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" # 唯一的自启块ID
+AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" 
 
 # ==== 颜色定义 ====
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m';
@@ -166,10 +166,141 @@ _attempt_clone() {
     done; return 1
 }
 
+_ensure_config_exists() {
+    local config_file="$ST_DIR/config.yaml"
+    local example_config_file="$ST_DIR/config.yaml.example"
+    if [ ! -f "$config_file" ]; then
+        if [ -f "$example_config_file" ]; then
+            info "未找到 config.yaml，将从 config.yaml.example 创建。"
+            cp "$example_config_file" "$config_file"
+            return 0
+        else
+            err "无法找到或创建 config.yaml 文件。配置操作无法继续。"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# [修正] 重写此函数，确保稳定性和准确性
+_get_st_config_value() {
+    local key="$1"
+    local config_file="$ST_DIR/config.yaml"
+    if [ ! -f "$config_file" ]; then echo "unknown"; return; fi
+
+    local value
+    value=$(grep -E "^\s*${key}\s*:" "$config_file" | \
+            grep -v '^\s*#' | \
+            tail -1 | \
+            awk -F':' '{print $2}' | \
+            sed 's/"//g' | \
+            xargs)
+    
+    echo "${value:-unknown}"
+}
+
+manage_port() {
+    _ensure_config_exists || return 1
+    local config_file="$ST_DIR/config.yaml"
+    local current_port=$(_get_st_config_value "port")
+    info "当前服务端口为: ${GREEN}${current_port}${NC}"
+    read -rp "请输入新的端口号 (1024-65535)，留空则不修改: " new_port
+    if [[ -z "$new_port" ]]; then info "端口未修改。"; return 0; fi
+    if [[ "$new_port" =~ ^[0-9]+$ && "$new_port" -ge 1024 && "$new_port" -le 65535 ]]; then
+        sed -i "s/^\(port:\s*\).*/\1${new_port}/" "$config_file"
+        success "端口已成功修改为: ${GREEN}${new_port}${NC}"
+        return 0
+    else
+        err "无效的端口号！请输入 1024-65535 之间的数字。"
+        return 1
+    fi
+}
+
+manage_password() {
+    _ensure_config_exists || return 1
+    local config_file="$ST_DIR/config.yaml"
+    info "即将设置或修改登录凭据。"
+    local username
+    while true; do
+        read -rp "请输入新的用户名: " username
+        if [[ -n "$username" ]]; then break; else err "用户名不能为空。"; fi
+    done
+    
+    local password password_confirm
+    while true; do
+        read -s -p "请输入新的密码: " password
+        echo
+        read -s -p "请再次确认密码: " password_confirm
+        echo
+        if [[ -z "$password" ]]; then err "密码不能为空。";
+        elif [[ "$password" == "$password_confirm" ]]; then break;
+        else err "两次输入的密码不匹配，请重试。"; fi
+    done
+    
+    sed -i "/^\s*username:/c\  username: \"${username}\"" "$config_file"
+    sed -i "/^\s*password:/c\  password: \"${password}\"" "$config_file"
+    sed -i "s/^\(basicAuthMode:\s*\).*/\1true/" "$config_file"
+    
+    success "用户凭据设置成功！登录认证已自动开启 (basicAuthMode: true)。"
+    return 0
+}
+
+manage_listening() {
+    _ensure_config_exists || return 1
+    local config_file="$ST_DIR/config.yaml"
+    local is_listening=$(_get_st_config_value "listen")
+    local is_auth_enabled=$(grep -q "basicAuthMode:\s*true" "$config_file" && echo "true" || echo "false")
+    
+    if [[ "$is_listening" == "true" ]]; then
+        local yn
+        echo -en "${WHITE}网络监听当前为 ${GREEN}开启${NC}${WHITE}状态，是否要将其关闭 (仅限本机访问)? [Y/n]: ${NC}"
+        read -r yn
+        if [[ ! "$yn" =~ ^[Nn]$ ]]; then
+            sed -i "s/^\(listen:\s*\).*/\1false/" "$config_file"
+            success "网络监听已关闭。"
+            return 0
+        else
+            info "操作已取消，监听状态未改变。"
+            return 1 # 表示未做修改
+        fi
+    else
+        local prompt_text
+        if [[ -n "$TERMUX_VERSION" ]]; then prompt_text="是否要开启网络监听以允许其他设备访问? [y/N]: "; else prompt_text="是否要开启网络监听？ [Y/n]: "; fi
+        
+        local yn
+        read -rp "$prompt_text" yn
+        local proceed=false
+        if [[ -n "$TERMUX_VERSION" && "$yn" =~ ^[Yy]$ ]]; then proceed=true;
+        elif [[ -z "$TERMUX_VERSION" && ! "$yn" =~ ^[Nn]$ ]]; then proceed=true; fi
+        
+        if [[ "$proceed" == "true" ]]; then
+            if [[ "$is_auth_enabled" == "false" ]]; then
+                warn "安全警告：开启网络监听前，必须设置登录密码！"
+                read -rp "是否立即设置用户名和密码? (选择'n'将取消开启监听) [Y/n]: " set_pass_now
+                if [[ ! "$set_pass_now" =~ ^[Nn]$ ]]; then
+                    if manage_password; then
+                       :
+                    else
+                       err "密码设置失败，无法开启监听。"
+                       return 1
+                    fi
+                else
+                    info "已取消设置密码，网络监听保持关闭。"; return 1
+                fi
+            fi
+            sed -i "s/^\(listen:\s*\).*/\1true/" "$config_file"
+            success "网络监听已开启。"
+            return 0
+        else
+            info "操作已取消，网络监听保持关闭。"; return 1
+        fi
+    fi
+}
+
 manage_sillytavern() {
     install_or_update_nodejs || { err "Node.js 环境配置失败，操作中止。"; return 1; }
     check_and_install_deps "git" "curl" "jq" || { err "核心依赖检查或安装失败，操作中止。"; return 1; }
-    handle_proxy_logic "install"; local local_ver; local_ver=$(get_local_st_ver)
+    handle_proxy_logic; local local_ver; local_ver=$(get_local_st_ver)
     if [[ "$local_ver" != "未安装" ]]; then
         info "检测到SillyTavern已安装 (版本: $local_ver)，即将开始更新..."; info "为保证数据安全，将先进行备份。"
         _create_backup_instance || { err "更新前备份失败，操作中止。"; return 1; }
@@ -189,26 +320,39 @@ manage_sillytavern() {
             else err "网络诊断与修复失败，无法继续安装。"; return 1; fi
         fi
         cd "$ST_DIR" || { err "无法进入新创建的目录: $ST_DIR"; return 1; }
-        info "正在安装NPM依赖..."; npm config set registry "https://registry.npmmirror.com/"; if ! npm install --omit=dev; then err "NPM依赖安装失败。"; return 1; fi; success "SillyTavern 安装完成！"
+        info "正在安装NPM依赖..."; npm config set registry "https://registry.npmmirror.com/"
+        if ! npm install --omit=dev; then err "NPM依赖安装失败。"; return 1; fi
+        success "SillyTavern 安装完成！"
+        
+        echo; info "安装已完成，现在开始进行首次配置..."
+        _ensure_config_exists || return 1
+        manage_port
+        manage_listening
+        info "首次配置完成！如有修改，建议重启服务使其生效。"
     fi
     if [[ "$EUID" -eq 0 && -n "$SUDO_USER" ]]; then chown -R "$SUDO_USER:${SUDO_GID:-$SUDO_USER}" "$ST_DIR"; success "文件权限修正完成！"; fi
 }
 
 handle_proxy_logic() {
-    local mode="$1"; if [[ "$mode" == "install" && "$PROXY_CONFIGURED_MANUALLY" == true ]]; then info "已检测到代理配置，将继续使用当前设置。"; return 0; fi
-    check_and_install_deps "curl" || return 1; local country; country=$(curl -s --connect-timeout 5 ipinfo.io/country 2>/dev/null)
+    [[ "$PROXY_CONFIGURED_MANUALLY" == true ]] && return 0
+    check_and_install_deps "curl" || return 1
+    local country
+    country=$(curl -s --connect-timeout 5 ipinfo.io/country 2>/dev/null)
     if [[ "$country" == "CN" ]]; then
-        info "检测到您可能位于中国大陆(CN)。推荐开启代理以加速GitHub和依赖安装。"; read -rp "是否启用加速代理? [Y/n]: " yn
+        info "检测到您可能位于中国大陆(CN)。推荐开启代理以加速GitHub和依赖安装。"
+        read -rp "是否启用加速代理? [Y/n]: " yn
         if [[ ! "$yn" =~ ^[Nn]$ ]]; then PROXY_ENABLED=true; else PROXY_ENABLED=false; fi
-    else
-        info "检测到您位于海外地区 (${country:-未知})。"; read -rp "您是否需要启用加速代理? [y/N]: " yn
-        if [[ "$yn" =~ ^[Yy]$ ]]; then PROXY_ENABLED=true; success "已根据您的选择启用代理。"; else PROXY_ENABLED=false; info "已根据您的选择禁用代理。"; fi
+        PROXY_CONFIGURED_MANUALLY=true
     fi
-    if [[ "$PROXY_ENABLED" == true && -n "$TERMUX_VERSION" ]]; then local T_PREFIX="/data/data/com.termux/files/usr";
-        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/termux-packages-24@' $T_PREFIX/etc/apt/sources.list; sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/science@' $T_PREFIX/etc/apt/sources.list.d/science.list; sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/game@' $T_PREFIX/etc/apt/sources.list.d/game.list;
-        pkg update --fix-missing -y || warn "更新软件源列表失败。"; success "Termux镜像源已切换至清华源。"
+    if [[ "$PROXY_ENABLED" == true && -n "$TERMUX_VERSION" ]]; then
+        local T_PREFIX="/data/data/com.termux/files/usr"
+        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/termux-packages-24@' "$T_PREFIX/etc/apt/sources.list"
+        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/science@' "$T_PREFIX/etc/apt/sources.list.d/science.list"
+        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/game@' "$T_PREFIX/etc/apt/sources.list.d/game.list"
+        pkg update --fix-missing -y || warn "更新软件源列表失败。"
+        success "Termux镜像源已切换至清华源。"
     fi
-    PROXY_CONFIGURED_MANUALLY=true; [[ "$PROXY_ENABLED" == true ]] && info "当前访问模式: ${GREEN}代理模式${NC}" || info "当前访问模式: ${YELLOW}直连模式${NC}"
+    [[ "$PROXY_ENABLED" == true ]] && success "加速代理已启用。"
 }
 
 get_local_st_ver() { [ -f "$ST_DIR/package.json" ] && jq -r .version "$ST_DIR/package.json" || echo "未安装"; }
@@ -230,6 +374,7 @@ check_st_running() {
 }
 
 update_script() {
+    handle_proxy_logic
     check_and_install_deps "curl" "dnsutils" || return 1; info "正在检查脚本更新...";
     local raw_host="raw.githubusercontent.com"; local proxy_domain=$(echo "$PROXY_URL" | cut -d'/' -f3); local curl_opts="-sLk --connect-timeout 8"
     resolve_host() { local host_to_resolve=$1; local resolved_ip=""; for dns in "1.1.1.1" "8.8.8.8" "114.114.114.114" "223.5.5.5"; do if command -v dig &> /dev/null; then resolved_ip=$(dig @${dns} +short A ${host_to_resolve} | head -1); elif command -v nslookup &> /dev/null; then resolved_ip=$(nslookup ${host_to_resolve} ${dns} | awk '/^Address: / { print $2 }' | tail -n 1); fi; if [[ -n "$resolved_ip" && "$resolved_ip" != "can't" && "$resolved_ip" != "find" ]]; then curl_opts="${curl_opts} --resolve ${host_to_resolve}:443:${resolved_ip}"; return 0; fi; done; return 1; }; resolve_host "$raw_host"; resolve_host "$proxy_domain"
@@ -253,17 +398,42 @@ update_script() {
 
 show_start_message() {
     check_and_install_deps "curl" || return 1
+    local port=$(_get_st_config_value "port")
+    [[ "$port" == "unknown" ]] && port="8000"
+
     info "正在获取公网IP地址..."
     local public_ip; public_ip=$(curl -s --connect-timeout 5 ip.sb); if [[ -z "$public_ip" ]]; then public_ip=$(curl -s --connect-timeout 5 ifconfig.me); fi
     echo -e "${GREEN}--------------------------------------------------${NC}"
     echo -e "${YELLOW}酒馆已启动！请通过以下地址访问：${NC}"
-    echo -e "${WHITE}  - 本地访问: ${GREEN}http://127.0.0.1:8000${NC}"
-    if [[ -n "$public_ip" ]]; then
-        echo -e "${WHITE}  - 公网访问: ${GREEN}http://${public_ip}:8000${NC} (需放行端口)"
-    else
-        warn "  - 未能获取到公网IP，请手动查询。"
+    echo -e "${WHITE}  - 本地访问: ${GREEN}http://127.0.0.1:${port}${NC}"
+    if grep -q "listen:\s*true" "$ST_DIR/config.yaml" 2>/dev/null; then
+        if [[ -n "$public_ip" ]]; then
+            echo -e "${WHITE}  - 远程访问: ${GREEN}http://${public_ip}:${port}${NC} (需防火墙放行端口)"
+        else
+            warn "  - 未能获取到公网IP，请手动查询局域网IP进行远程访问。"
+        fi
     fi
     echo -e "${GREEN}--------------------------------------------------${NC}"
+}
+
+display_access_urls() {
+    [[ "$(get_local_st_ver)" == "未安装" ]] && return
+
+    local port=$(_get_st_config_value "port")
+    [[ "$port" == "unknown" ]] && port="8000"
+
+    echo -e "${CYAN}--- 访问地址 ---${NC}"
+    echo -e "${WHITE}  - 本地访问: ${GREEN}http://127.0.0.1:${port}${NC}"
+
+    if grep -q "listen:\s*true" "$ST_DIR/config.yaml" 2>/dev/null; then
+        local public_ip
+        public_ip=$(curl -s --connect-timeout 2 ip.sb)
+        if [[ -n "$public_ip" ]]; then
+            echo -e "${WHITE}  - 远程访问: ${GREEN}http://${public_ip}:${port}${NC}"
+        else
+            echo -e "${WHITE}  - 远程访问: ${YELLOW}http://<您的IP地址>:${port}${NC}"
+        fi
+    fi
 }
 
 rotate_backups() {
@@ -363,6 +533,43 @@ quick_restart() {
             err "酒馆当前未运行，无法重启。请先从'启动/停止'菜单中启动它。"
             ;;
     esac
+}
+
+config_menu() {
+    [[ "$(get_local_st_ver)" == "未安装" ]] && { err "请先安装SillyTavern。"; return; }
+    local config_changed=false
+    
+    while true; do
+        clear; echo -e "${CYAN}--- 酒馆配置管理 ---${NC}"
+        echo -e "${WHITE}配置文件路径: ${CYAN}$ST_DIR/config.yaml${NC}"; echo -e "${CYAN}--------------------------------------------------${NC}"
+        local listen_status=$(_get_st_config_value listen); if [[ "$listen_status" == "true" ]]; then listen_status="${GREEN}开启${NC}"; else listen_status="${RED}关闭${NC}"; fi
+        local auth_status=$(_get_st_config_value basicAuthMode); if [[ "$auth_status" == "true" ]]; then auth_status="${GREEN}开启${NC}"; else auth_status="${RED}关闭${NC}"; fi
+        echo -e "  ${GREEN}1)${NC} 切换网络监听 (当前: ${listen_status}${WHITE})\n  ${GREEN}2)${NC} 修改登录密码 (认证: ${auth_status}${WHITE})\n  ${GREEN}3)${NC} 修改服务端口 (当前: ${GREEN}$(_get_st_config_value port)${NC}${WHITE})\n"
+        echo -e "  ${WHITE}0)${NC} 返回主菜单"
+        read -rp "请选择操作 [0-3]: " choice
+        
+        local modified=false
+        case "$choice" in
+            1) manage_listening && modified=true ;;
+            2) manage_password && modified=true ;;
+            3) manage_port && modified=true ;;
+            0) 
+                if [[ "$config_changed" == true ]]; then
+                    info "检测到配置已更改，将为您自动重启服务以应用设置..."
+                    quick_restart
+                fi
+                return
+                ;;
+            *) err "无效选项" ;;
+        esac
+        
+        if [[ "$modified" == true ]]; then
+             config_changed=true
+             warn "配置已修改，将在您退出此菜单时自动重启服务。"
+        fi
+        
+        echo ""; read -n1 -s -r -p "按任意键继续..."
+    done
 }
 
 start_menu() {
@@ -519,7 +726,7 @@ initial_setup_check() {
     if [[ "$deps_ok" == true ]]; then success "环境完整，无需初始化。"; return 0; fi
 
     echo; warn "首次运行或环境不完整，需要进行初始化设置。"; info "此过程将安装或更新运行本脚本及SillyTavern所需的核心组件。"; echo
-    handle_proxy_logic "interactive"
+    handle_proxy_logic
     install_or_update_nodejs || { err "Node.js 环境配置失败，无法继续。"; exit 1; }
     check_and_install_deps "${essential_deps[@]}" || { err "基础依赖安装失败，无法继续。"; exit 1; }
     echo; success "所有依赖已配置完毕！"; info "正在进入主菜单..."; sleep 2
@@ -550,15 +757,24 @@ main_menu() {
         echo -e "${WHITE}\n    ___    __ __ ___    _   ________\n   /   |  / //_//   |  / | / / ____/\n  / /| | / ,<  / /| | /  |/ / **/   \n / | |/ /| |/   |/ /|  / /**_   \n/_/  |_/_/ |_/_/  |_/_/ |_/_____/   \n${WHITE}           SillyTavern酒馆管理脚本            ${NC}"
         echo -e "                                     ${CYAN}v${SCRIPT_VERSION}${NC}\n${WHITE}作者：${AUTHOR}            更新日期:${UPDATE_DATE}${NC}\n${WHITE}${CONTACT_INFO_LINE1}${NC}\n${WHITE}${CONTACT_INFO_LINE2}${NC}"
         echo -e "${CYAN}==================================================${NC}"
-        if [[ "$st_ver" != "未安装" ]]; then echo -e "${WHITE}酒馆目录: ${CYAN}$ST_DIR${NC}"; fi
-        echo -e "${WHITE}SillyTavern 状态: ${GREEN}${st_ver}${NC} ${st_status}"; echo -e "${WHITE}GitHub 代理模式 : $(if [[ "$PROXY_ENABLED" == true ]]; then echo -e "${GREEN}开启${NC}"; else echo -e "${RED}关闭${NC}"; fi)"
-        echo -e "${CYAN}--------------------------------------------------${NC}\n  ${GREEN}1)${NC} 安装 / 更新\n  ${GREEN}2)${NC} 启动 / 停止 / 管理\n  ${BLUE}3)${NC} 备份管理\n  ${YELLOW}4)${NC} 代理设置\n  ${CYAN}5)${NC} 快速重启服务\n  ${RED}6)${NC} 卸载SillyTavern\n\n  ${CYAN}9)${NC} 检查脚本更新\n  ${WHITE}0)${NC} 退出\n${CYAN}==================================================${NC}"
+        
+        echo -e "${WHITE}SillyTavern 状态: ${GREEN}${st_ver}${NC} ${st_status}"
+        display_access_urls
+
+        echo -e "${CYAN}--------------------------------------------------${NC}\n  ${GREEN}1)${NC} 安装 / 更新\n  ${GREEN}2)${NC} 启动 / 停止 / 自启管理\n  ${YELLOW}3)${NC} 酒馆配置管理\n  ${BLUE}4)${NC} 备份管理\n  ${CYAN}5)${NC} 快速重启服务\n  ${RED}6)${NC} 卸载SillyTavern\n\n  ${CYAN}9)${NC} 检查脚本更新\n  ${WHITE}0)${NC} 退出\n${CYAN}==================================================${NC}"
         read -rp "请选择操作 [0-9]: " opt
         case "$opt" in
-            1) manage_sillytavern ;; 2) start_menu ;; 3) backup_menu ;; 4) handle_proxy_logic "interactive" ;;
-            5) quick_restart ;; 6) uninstall_sillytavern ;; 9) update_script ;; 0) exit 0 ;; *) err "无效选项，请重试。" ;;
+            1) manage_sillytavern ;;
+            2) start_menu ;;
+            3) config_menu ;;
+            4) backup_menu ;;
+            5) quick_restart ;;
+            6) uninstall_sillytavern ;;
+            9) update_script ;;
+            0) exit 0 ;;
+            *) err "无效选项，请重试。" ;;
         esac
-        if [[ "$opt" != "0" ]]; then echo ""; read -n1 -s -r -p "按任意键返回主菜单..."; fi
+        if [[ "$opt" != "0" && "$opt" != "3" ]]; then echo ""; read -n1 -s -r -p "按任意键返回主菜单..."; fi
     done
 }
 
