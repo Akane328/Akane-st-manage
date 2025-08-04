@@ -11,10 +11,10 @@ PROXY_URL="https://ghfast.top/"
 PROXY_ENABLED=false
 PROXY_CONFIGURED_MANUALLY=false
 AUTHOR="三月"
-UPDATE_DATE="2025-08-12"
+UPDATE_DATE="2025-08-4"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.15" # 版本号提升
+SCRIPT_VERSION="1.16" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" # 唯一的自启块ID
 
@@ -204,7 +204,7 @@ manage_port() {
     local current_port=$(_get_st_config_value "port")
     info "当前服务端口为: ${GREEN}${current_port}${NC}"
     read -rp "请输入新的端口号 (1024-65535)，留空则不修改: " new_port
-    if [[ -z "$new_port" ]]; then info "端口未修改。"; return 1; fi # 返回1表示未修改
+    if [[ -z "$new_port" ]]; then info "端口未修改。"; return 1; fi
     if [[ "$new_port" =~ ^[0-9]+$ && "$new_port" -ge 1024 && "$new_port" -le 65535 ]]; then
         sed -i "s/^\(port:\s*\).*/\1${new_port}/" "$config_file"
         success "端口已成功修改为: ${GREEN}${new_port}${NC}"
@@ -297,7 +297,7 @@ manage_listening() {
 }
 
 manage_sillytavern() {
-    install_or_update_nodejs || { err "Node.js 环境配置失败，操作中止。"; return 1; }
+    install_or_update_nodejs || { err "Node.js 环境配置失败，操作中止。"; exit 1; }
     check_and_install_deps "git" "curl" "jq" || { err "核心依赖检查或安装失败，操作中止。"; return 1; }
     handle_proxy_logic; local local_ver; local_ver=$(get_local_st_ver)
     if [[ "$local_ver" != "未安装" ]]; then
@@ -326,10 +326,8 @@ manage_sillytavern() {
         echo; info "安装已完成，现在开始进行首次配置..."
         _ensure_config_exists || return 1
         local config_modified=false
-        manage_port || true
-        [[ $? -eq 0 ]] && config_modified=true
-        manage_listening || true
-        [[ $? -eq 0 ]] && config_modified=true
+        manage_port; if [[ $? -eq 0 ]]; then config_modified=true; fi
+        manage_listening; if [[ $? -eq 0 ]]; then config_modified=true; fi
         info "首次配置完成！"
         if [[ "$config_modified" == true ]]; then
             warn "您的配置已修改，建议从主菜单重启服务使其生效。"
@@ -349,15 +347,33 @@ handle_proxy_logic() {
         if [[ ! "$yn" =~ ^[Nn]$ ]]; then PROXY_ENABLED=true; else PROXY_ENABLED=false; fi
         PROXY_CONFIGURED_MANUALLY=true
     fi
-    if [[ "$PROXY_ENABLED" == true && -n "$TERMUX_VERSION" ]]; then
-        local T_PREFIX="/data/data/com.termux/files/usr"
-        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/termux-packages-24@' "$T_PREFIX/etc/apt/sources.list"
-        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/science@' "$T_PREFIX/etc/apt/sources.list.d/science.list"
-        sed -i 's@^\(deb.*\) https://mirrors.*@\1 https://mirrors.tuna.tsinghua.edu.cn/termux/game@' "$T_PREFIX/etc/apt/sources.list.d/game.list"
-        pkg update --fix-missing -y || warn "更新软件源列表失败。"
-        success "Termux镜像源已切换至清华源。"
+    if [[ "$PROXY_ENABLED" == true ]]; then
+        success "加速代理已启用。"
+        # [修正] 针对 Termux 环境，使用官方工具更换镜像
+        if [[ -n "$TERMUX_VERSION" ]]; then
+            info "检测到Termux环境，正在处理镜像源问题..."
+            # 尝试更新，如果失败，则说明当前镜像有问题，需要更换
+            if ! pkg update -y >/dev/null 2>&1; then
+                warn "您当前的Termux镜像源似乎已失效或无法访问。"
+                info "即将为您调用官方的镜像更换工具..."
+                warn "请在接下来的菜单中选择一个位于中国的镜像（如Tsinghua, USTC等）。"
+                warn "使用方向键移动，空格键选择，回车键确认。"
+                read -n1 -s -r -p "按任意键以继续..."
+                
+                termux-change-repo
+                
+                info "镜像更换操作完成，正在验证..."
+                if ! pkg update -y; then
+                    err "更换镜像后更新软件包列表依然失败！"
+                    err "请检查您的网络连接，或重新运行脚本并选择另一个镜像。"
+                    return 1
+                fi
+                success "Termux镜像源配置成功并已更新！"
+            else
+                success "Termux镜像源可用，无需更换。"
+            fi
+        fi
     fi
-    [[ "$PROXY_ENABLED" == true ]] && success "加速代理已启用。"
 }
 
 get_local_st_ver() { [ -f "$ST_DIR/package.json" ] && jq -r .version "$ST_DIR/package.json" || echo "未安装"; }
@@ -556,9 +572,9 @@ config_menu() {
         
         local modified=false
         case "$choice" in
-            1) manage_listening || modified=false; modified=true ;;
+            1) manage_listening; if [[ $? -eq 0 ]]; then modified=true; fi ;;
             2) manage_password && modified=true ;;
-            3) manage_port || modified=false; modified=true ;;
+            3) manage_port; if [[ $? -eq 0 ]]; then modified=true; fi ;;
             0) 
                 if [[ "$config_changed" == true ]]; then
                     info "检测到配置已更改，将为您自动重启服务以应用设置..."
@@ -625,16 +641,12 @@ start_menu() {
                     success "'打开App时自启' 已被取消。"
                 else
                     info "正在配置 '打开App时自启'..."
-                    # [修正] 增加 screen -wipe 来清理僵尸会话，确保自启可靠性
                     cat <<EOF >> "$HOME/.bashrc"
 
 ${AUTOSTART_BLOCK_ID}
 # This block is managed by sany-stm.sh, do not edit manually.
 if command -v screen &> /dev/null; then
-    # Clean up any dead screen sessions first to prevent startup failure
     screen -wipe >/dev/null 2>&1
-    
-    # Check if the service is NOT running, then start it
     if ! screen -list | grep -q "\.${SCREEN_NAME}"; then
         (
           termux-wake-lock
@@ -739,7 +751,7 @@ initial_setup_check() {
     if [[ "$deps_ok" == true ]]; then success "环境完整，无需初始化。"; return 0; fi
 
     echo; warn "首次运行或环境不完整，需要进行初始化设置。"; info "此过程将安装或更新运行本脚本及SillyTavern所需的核心组件。"; echo
-    handle_proxy_logic
+    handle_proxy_logic || { err "Termux 镜像源配置失败，初始化中断。"; exit 1; }
     install_or_update_nodejs || { err "Node.js 环境配置失败，无法继续。"; exit 1; }
     check_and_install_deps "${essential_deps[@]}" || { err "基础依赖安装失败，无法继续。"; exit 1; }
     echo; success "所有依赖已配置完毕！"; info "正在进入主菜单..."; sleep 2
