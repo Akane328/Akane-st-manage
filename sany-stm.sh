@@ -14,7 +14,7 @@ AUTHOR="三月"
 UPDATE_DATE="2025-08-4"
 CONTACT_INFO_LINE1="欢迎加群获取最新脚本"
 CONTACT_INFO_LINE2="交流群：923018427   API群：1013506523"
-SCRIPT_VERSION="1.16" # 版本号提升
+SCRIPT_VERSION="1.17" # 版本号提升
 SCRIPT_NAME="sany-stm.sh"
 AUTOSTART_BLOCK_ID="#SANY-STM-AUTOSTART-BLOCK-${safe_dirname}" # 唯一的自启块ID
 
@@ -349,10 +349,8 @@ handle_proxy_logic() {
     fi
     if [[ "$PROXY_ENABLED" == true ]]; then
         success "加速代理已启用。"
-        # [修正] 针对 Termux 环境，使用官方工具更换镜像
         if [[ -n "$TERMUX_VERSION" ]]; then
             info "检测到Termux环境，正在处理镜像源问题..."
-            # 尝试更新，如果失败，则说明当前镜像有问题，需要更换
             if ! pkg update -y >/dev/null 2>&1; then
                 warn "您当前的Termux镜像源似乎已失效或无法访问。"
                 info "即将为您调用官方的镜像更换工具..."
@@ -374,6 +372,7 @@ handle_proxy_logic() {
             fi
         fi
     fi
+    return 0
 }
 
 get_local_st_ver() { [ -f "$ST_DIR/package.json" ] && jq -r .version "$ST_DIR/package.json" || echo "未安装"; }
@@ -396,7 +395,7 @@ check_st_running() {
 }
 
 update_script() {
-    handle_proxy_logic
+    handle_proxy_logic || return 1
     check_and_install_deps "curl" "dnsutils" || return 1; info "正在检查脚本更新...";
     local raw_host="raw.githubusercontent.com"; local proxy_domain=$(echo "$PROXY_URL" | cut -d'/' -f3); local curl_opts="-sLk --connect-timeout 8"
     resolve_host() { local host_to_resolve=$1; local resolved_ip=""; for dns in "1.1.1.1" "8.8.8.8" "114.114.114.114" "223.5.5.5"; do if command -v dig &> /dev/null; then resolved_ip=$(dig @${dns} +short A ${host_to_resolve} | head -1); elif command -v nslookup &> /dev/null; then resolved_ip=$(nslookup ${host_to_resolve} ${dns} | awk '/^Address: / { print $2 }' | tail -n 1); fi; if [[ -n "$resolved_ip" && "$resolved_ip" != "can't" && "$resolved_ip" != "find" ]]; then curl_opts="${curl_opts} --resolve ${host_to_resolve}:443:${resolved_ip}"; return 0; fi; done; return 1; }; resolve_host "$raw_host"; resolve_host "$proxy_domain"
@@ -502,9 +501,14 @@ _create_backup_instance() {
 
 _cleanup_termux_autostart() {
     if [[ -n "$TERMUX_VERSION" ]] && [ -f "$HOME/.bashrc" ]; then
-        info "正在清理 Termux (.bashrc) 自启配置..."
-        sed -i.bak "/${AUTOSTART_BLOCK_ID}/,/${AUTOSTART_BLOCK_ID}/d" "$HOME/.bashrc"
-        sed -i '/^$/N;/^\n$/D' "$HOME/.bashrc"
+        if grep -q "${AUTOSTART_BLOCK_ID}" "$HOME/.bashrc"; then
+            info "正在清理 Termux (.bashrc) 中残留的自启配置..."
+            # 使用 sed 删除整个块
+            sed -i.bak "/${AUTOSTART_BLOCK_ID}/,/${AUTOSTART_BLOCK_ID}/d" "$HOME/.bashrc"
+            # 清理可能留下的多余空行
+            sed -i '/^$/N;/^\n$/D' "$HOME/.bashrc"
+            success "旧的自启配置已清理。"
+        fi
     fi
 }
 
@@ -515,11 +519,10 @@ uninstall_sillytavern() {
     if [[ "$confirm" == "DELETE" ]]; then
         info "正在停止所有相关服务..."; screen -X -S "$SCREEN_NAME" quit 2>/dev/null
         if [[ -f "$SERVICE_FILE" ]]; then if ! _request_sudo_privileges; then err "无法获取sudo权限，无法停止或禁用systemd服务。"; else $SUDO_CMD systemctl stop "$SERVICE_NAME" 2>/dev/null; $SUDO_CMD systemctl disable "$SERVICE_NAME" 2>/dev/null; fi; fi
-        info "正在删除 SillyTavern 目录: $ST_DIR"; rm -rf "$ST_DIR"; info "正在清理相关服务文件..."
+        info "正在删除 SillyTavern 目录: $ST_DIR"; rm -rf "$ST_DIR"; 
+        info "正在清理相关服务文件和自启配置..." # 明确告知用户
         if [[ -f "$SERVICE_FILE" ]]; then if _request_sudo_privileges; then $SUDO_CMD rm -f "$SERVICE_FILE"; $SUDO_CMD systemctl daemon-reload; fi; fi
-        if [[ -n "$TERMUX_VERSION" ]]; then
-            _cleanup_termux_autostart
-        fi
+        _cleanup_termux_autostart # 确保调用清理函数
         success "SillyTavern 已被彻底卸载。"
     else info "操作已取消。"; fi
 }
@@ -607,14 +610,9 @@ start_menu() {
     
     echo -e "${CYAN}--- 自启管理 ---${NC}"
     if [[ -n "$TERMUX_VERSION" ]]; then
-        local app_autostart_enabled=false
-        if grep -q "${AUTOSTART_BLOCK_ID}" "$HOME/.bashrc" 2>/dev/null; then app_autostart_enabled=true; fi
-        if [[ "$app_autostart_enabled" == true ]]; then
-            echo -e "  ${RED}5)${NC} 取消 '打开App时自启'"
-        else
-            echo -e "  ${GREEN}5)${NC} 设置 '打开App时自启' (推荐)"
-        fi
-        echo -e "  ${BLUE}6)${NC} (此项不适用于Termux)\n"
+        # [移除] 不再提供Termux的自启选项
+        echo -e "  ${BLUE}5)${NC} (开机自启功能不适用于Termux)"
+        echo -e "  ${BLUE}6)${NC} (Systemd日志功能不适用于Termux)\n"
     else
         local service_enabled=false; [[ -f "$SERVICE_FILE" ]] && systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null && service_enabled=true
         if [[ "$service_enabled" == true ]]; then
@@ -634,33 +632,8 @@ start_menu() {
         4) if [[ "$screen_is_running" == true ]]; then info "正在停止后台服务..."; if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-unlock; fi; screen -X -S "$SCREEN_NAME" quit; success "Screen服务已停止。"; else err "Screen服务未运行。"; fi;;
         5)
             if [[ -n "$TERMUX_VERSION" ]]; then
-                local app_autostart_enabled=false
-                if grep -q "${AUTOSTART_BLOCK_ID}" "$HOME/.bashrc" 2>/dev/null; then app_autostart_enabled=true; fi
-                if [[ "$app_autostart_enabled" == true ]]; then
-                    _cleanup_termux_autostart
-                    success "'打开App时自启' 已被取消。"
-                else
-                    info "正在配置 '打开App时自启'..."
-                    cat <<EOF >> "$HOME/.bashrc"
-
-${AUTOSTART_BLOCK_ID}
-# This block is managed by sany-stm.sh, do not edit manually.
-if command -v screen &> /dev/null; then
-    screen -wipe >/dev/null 2>&1
-    if ! screen -list | grep -q "\.${SCREEN_NAME}"; then
-        (
-          termux-wake-lock
-          echo "SillyTavern not running, starting automatically in background..."
-          screen -dmS "${SCREEN_NAME}" bash -c "cd '${ST_DIR}' && bash ./start.sh"
-        ) &
-    fi
-fi
-${AUTOSTART_BLOCK_ID}
-EOF
-                    success "'打开App时自启' 已设置成功！"
-                    info "下次打开Termux时将自动检查并启动酒馆。"
-                    warn "请务必在手机系统设置中为Termux关闭电池优化，否则此功能可能失效。"
-                fi
+                # [移除] 不再提供Termux的自启功能
+                err "自启功能 (Systemd) 仅适用于标准Linux系统，不适用于Termux。"
             else
                 if ! _request_sudo_privileges; then return 1; fi
                 local service_enabled=false; [[ -f "$SERVICE_FILE" ]] && systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null && service_enabled=true
@@ -757,25 +730,8 @@ initial_setup_check() {
     echo; success "所有依赖已配置完毕！"; info "正在进入主菜单..."; sleep 2
 }
 
-auto_start_on_script_exec() {
-    if [[ "$(get_local_st_ver)" != "未安装" ]] && [[ "$(get_running_method)" == "stopped" ]]; then
-        info "检测到酒馆已安装但未运行，正在后台自动启动..."
-        if [[ -n "$TERMUX_VERSION" ]]; then termux-wake-lock; fi
-        screen -dmS "$SCREEN_NAME" bash -c "cd '$ST_DIR' && bash ./start.sh"
-        sleep 2
-        if screen -list | grep -q "\.$SCREEN_NAME"; then
-            success "酒馆已在后台自动启动。"
-            show_start_message
-            echo ""
-            read -n1 -s -r -p "按任意键进入主菜单..."
-        else
-            err "尝试自动启动酒馆失败！"
-        fi
-    fi
-}
-
 main_menu() {
-    auto_start_on_script_exec
+    # [移除] 不再在执行脚本时自动启动服务
     while true; do
         local st_ver; st_ver=$(get_local_st_ver); local st_status=""; [[ "$st_ver" != "未安装" ]] && st_status=$(check_st_running);
         clear; echo -e "${CYAN}==================================================${NC}"
