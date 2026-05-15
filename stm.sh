@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.8"
+SCRIPT_VERSION="1.0.9"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -207,7 +207,7 @@ run_with_spinner() {
     return $exit_code
 }
 
-# 带进度条执行 git 命令（解析 git 的 progress 输出显示百分比进度条 + 剩余时间）
+# 带进度条执行 git 命令（解析 git 的 progress 输出显示百分比进度条 + 速度）
 # 用法: run_git_with_progress "提示文字" git_command args...
 run_git_with_progress() {
     local msg="$1"
@@ -221,51 +221,40 @@ run_git_with_progress() {
     # 后台执行 git 命令，stderr 包含进度信息
     "$@" --progress > "$tmp_out" 2>"$tmp_err" &
     local cmd_pid=$!
-    local start_time=$SECONDS
-    local last_percent=0
 
     # 解析 git 进度输出
     while kill -0 "$cmd_pid" 2>/dev/null; do
         # 从 stderr 读取最新进度（git 用 \r 覆盖行）
-        local progress_line
-        progress_line=$(tail -c 200 "$tmp_err" 2>/dev/null | tr '\r' '\n' | grep -oE '[0-9]+%' | tail -1)
+        local last_line
+        last_line=$(tail -c 300 "$tmp_err" 2>/dev/null | tr '\r' '\n' | tail -1)
 
-        if [ -n "$progress_line" ]; then
-            local percent="${progress_line%\%}"
-            if [ "$percent" -gt 0 ] 2>/dev/null; then
-                last_percent="$percent"
-                local elapsed=$(( SECONDS - start_time ))
+        local percent=""
+        percent=$(echo "$last_line" | grep -oE '[0-9]+%' | tail -1)
 
-                # 计算剩余时间
-                local eta_str=""
-                if [ "$percent" -gt 2 ] && [ "$elapsed" -gt 1 ]; then
-                    local total_est=$(( elapsed * 100 / percent ))
-                    local remaining=$(( total_est - elapsed ))
-                    if [ "$remaining" -lt 0 ]; then remaining=0; fi
-                    local eta_min=$((remaining / 60))
-                    local eta_sec=$((remaining % 60))
-                    if [ "$eta_min" -gt 0 ]; then
-                        eta_str="剩余 ${eta_min}m${eta_sec}s"
-                    else
-                        eta_str="剩余 ${eta_sec}s"
-                    fi
-                fi
+        if [ -n "$percent" ]; then
+            local pct="${percent%\%}"
 
-                # 绘制进度条
-                local bar_width=20
-                local filled=$((percent * bar_width / 100))
-                local empty=$((bar_width - filled))
-                local bar=""
-                for ((bi=0; bi<filled; bi++)); do bar+="█"; done
-                for ((bi=0; bi<empty; bi++)); do bar+="░"; done
+            # 提取 git 输出中的速度信息（如 1.20 MiB/s）
+            local speed=""
+            speed=$(echo "$last_line" | grep -oE '[0-9]+(\.[0-9]+)? [KMG]iB/s' | tail -1)
 
-                # 获取当前阶段名
-                local stage
-                stage=$(tail -c 200 "$tmp_err" 2>/dev/null | tr '\r' '\n' | grep -oE '(Cloning|Counting|Compressing|Receiving|Resolving|Updating|Enumerating)[^:]*' | tail -1)
-                [ -z "$stage" ] && stage="$msg"
+            # 绘制进度条
+            local bar_width=20
+            local filled=$((pct * bar_width / 100))
+            local empty=$((bar_width - filled))
+            local bar=""
+            for ((bi=0; bi<filled; bi++)); do bar+="█"; done
+            for ((bi=0; bi<empty; bi++)); do bar+="░"; done
 
-                printf "\r  ${CYAN}  [%s] %3d%%${NC} ${GRAY}%s %s${NC}  " "$bar" "$percent" "$stage" "$eta_str"
-            fi
+            # 获取当前阶段名
+            local stage
+            stage=$(echo "$last_line" | grep -oE '(Cloning|Counting|Compressing|Receiving|Resolving|Updating|Enumerating)[^:]*' | tail -1)
+            [ -z "$stage" ] && stage="$msg"
+
+            local speed_str=""
+            [ -n "$speed" ] && speed_str="($speed)"
+
+            printf "\r  ${CYAN}  [%s] %3d%%${NC} ${GRAY}%s %s${NC}  " "$bar" "$pct" "$stage" "$speed_str"
         else
             # 还没有百分比输出，显示旋转动画
             local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
