@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.5"
+SCRIPT_VERSION="1.1.6"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -911,17 +911,11 @@ start_st_background() {
     # 清理无效 screen 会话
     cleanup_dead_screen
 
-    # 检查是否已有活跃的会话且 node 在运行
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME" && is_node_running; then
+    # 检查是否已有活跃的会话
+    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
         echo -e "  ${YELLOW}  酒馆已在后台运行中${NC}"
         echo -e "  ${GRAY}  输入 screen -r ${ST_SCREEN_NAME} 可进入查看${NC}"
         return 0
-    fi
-
-    # 如果有残留 screen 但 node 没跑，清理掉
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
-        screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
-        screen -wipe > /dev/null 2>&1
     fi
 
     echo -e "  ${CYAN}  正在后台运行 SillyTavern (screen)...${NC}"
@@ -929,8 +923,8 @@ start_st_background() {
     screen -dmS "$ST_SCREEN_NAME" bash -c "cd \"$ST_INSTALL_DIR\" && node server.js 2>&1 | tee \"$ST_LOG_FILE\""
     sleep 3
 
-    # 验证启动
-    if is_node_running; then
+    # 验证启动（检查 screen 会话是否存在）
+    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
         echo -e "  ${GREEN}  ✓ SillyTavern 已在后台运行${NC}"
         echo -e "  ${GRAY}  访问地址: http://localhost:${ST_PORT}${NC}"
         echo -e "  ${GRAY}  查看日志: screen -r ${ST_SCREEN_NAME}${NC}"
@@ -1831,9 +1825,8 @@ show_logo() {
 
 # 清理无效的 screen 会话（Dead 或 Remote or dead）
 cleanup_dead_screen() {
-    screen -wipe > /dev/null 2>&1
-    # screen -wipe 不能清理 "Remote or dead" 状态，需要手动强制清除
-    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qiE "dead|remote"; then
+    # 只清理明确标记为 Dead 的会话
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qiE "dead"; then
         screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
         screen -wipe > /dev/null 2>&1
     fi
@@ -1854,36 +1847,26 @@ get_st_status() {
 
     if echo "$screen_output" | grep -q "$ST_SCREEN_NAME"; then
         screen_has_st=true
-        if echo "$screen_output" | grep "$ST_SCREEN_NAME" | grep -qiE "dead|remote"; then
+        # 只有明确包含 Dead 或 "Remote or dead" 才视为无效
+        if echo "$screen_output" | grep "$ST_SCREEN_NAME" | grep -qiE "dead"; then
             screen_is_dead=true
         fi
     fi
 
-    # 清理无效 screen 会话
+    # 清理确认无效的 screen 会话
     if [ "$screen_is_dead" = true ]; then
         screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
         screen -wipe > /dev/null 2>&1
         screen_has_st=false
     fi
 
-    if is_node_running; then
-        if [ "$screen_has_st" = true ]; then
-            echo "running_screen"
-        elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
-            echo "running_systemd"
-        else
-            echo "running_foreground"
-        fi
-    elif [ "$screen_has_st" = true ]; then
-        # screen 存在但 node 没检测到 — 可能刚启动还没 fork
-        sleep 1
-        if is_node_running; then
-            echo "running_screen"
-        else
-            screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
-            screen -wipe > /dev/null 2>&1
-            echo "stopped"
-        fi
+    # screen 会话存在且非 dead，视为运行中
+    if [ "$screen_has_st" = true ]; then
+        echo "running_screen"
+    elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
+        echo "running_systemd"
+    elif is_node_running; then
+        echo "running_foreground"
     else
         echo "stopped"
     fi
