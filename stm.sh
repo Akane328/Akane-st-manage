@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -111,6 +111,40 @@ ensure_screen() {
     fi
 
     echo -e "  ${RED}  ✗ screen 安装失败，请手动安装${NC}"
+    return 1
+}
+
+# 确保 git 已安装，未安装则自动安装
+ensure_git() {
+    if command -v git > /dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "  ${CYAN}  git 未安装，正在自动安装...${NC}"
+
+    if is_termux; then
+        if pkg install -y git 2>&1 | tail -3; then
+            echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
+            return 0
+        fi
+    elif command -v apt-get > /dev/null 2>&1; then
+        if sudo apt-get install -y git 2>&1 | tail -3; then
+            echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
+            return 0
+        fi
+    elif command -v yum > /dev/null 2>&1; then
+        if sudo yum install -y git 2>&1 | tail -3; then
+            echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
+            return 0
+        fi
+    elif command -v pacman > /dev/null 2>&1; then
+        if sudo pacman -S --noconfirm git 2>&1 | tail -3; then
+            echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
+            return 0
+        fi
+    fi
+
+    echo -e "  ${RED}  ✗ git 安装失败，请手动安装${NC}"
     return 1
 }
 
@@ -454,6 +488,11 @@ install_or_update_st() {
     # 第一步：确保 Node.js 环境就绪
     if ! check_nodejs; then
         echo -e "\n  ${RED}Node.js 环境准备失败，无法继续安装${NC}"
+        return 1
+    fi
+
+    # 确保 git 可用
+    if ! ensure_git; then
         return 1
     fi
 
