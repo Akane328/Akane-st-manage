@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.7"
+SCRIPT_VERSION="1.0.8"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -204,6 +204,90 @@ run_with_spinner() {
     fi
 
     rm -f "$tmp_out"
+    return $exit_code
+}
+
+# 带进度条执行 git 命令（解析 git 的 progress 输出显示百分比进度条 + 剩余时间）
+# 用法: run_git_with_progress "提示文字" git_command args...
+run_git_with_progress() {
+    local msg="$1"
+    shift
+
+    local tmp_out
+    tmp_out=$(mktemp)
+    local tmp_err
+    tmp_err=$(mktemp)
+
+    # 后台执行 git 命令，stderr 包含进度信息
+    "$@" --progress > "$tmp_out" 2>"$tmp_err" &
+    local cmd_pid=$!
+    local start_time=$SECONDS
+    local last_percent=0
+
+    # 解析 git 进度输出
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+        # 从 stderr 读取最新进度（git 用 \r 覆盖行）
+        local progress_line
+        progress_line=$(tail -c 200 "$tmp_err" 2>/dev/null | tr '\r' '\n' | grep -oE '[0-9]+%' | tail -1)
+
+        if [ -n "$progress_line" ]; then
+            local percent="${progress_line%\%}"
+            if [ "$percent" -gt 0 ] 2>/dev/null; then
+                last_percent="$percent"
+                local elapsed=$(( SECONDS - start_time ))
+
+                # 计算剩余时间
+                local eta_str=""
+                if [ "$percent" -gt 2 ] && [ "$elapsed" -gt 1 ]; then
+                    local total_est=$(( elapsed * 100 / percent ))
+                    local remaining=$(( total_est - elapsed ))
+                    if [ "$remaining" -lt 0 ]; then remaining=0; fi
+                    local eta_min=$((remaining / 60))
+                    local eta_sec=$((remaining % 60))
+                    if [ "$eta_min" -gt 0 ]; then
+                        eta_str="剩余 ${eta_min}m${eta_sec}s"
+                    else
+                        eta_str="剩余 ${eta_sec}s"
+                    fi
+                fi
+
+                # 绘制进度条
+                local bar_width=20
+                local filled=$((percent * bar_width / 100))
+                local empty=$((bar_width - filled))
+                local bar=""
+                for ((bi=0; bi<filled; bi++)); do bar+="█"; done
+                for ((bi=0; bi<empty; bi++)); do bar+="░"; done
+
+                # 获取当前阶段名
+                local stage
+                stage=$(tail -c 200 "$tmp_err" 2>/dev/null | tr '\r' '\n' | grep -oE '(Cloning|Counting|Compressing|Receiving|Resolving|Updating|Enumerating)[^:]*' | tail -1)
+                [ -z "$stage" ] && stage="$msg"
+
+                printf "\r  ${CYAN}  [%s] %3d%%${NC} ${GRAY}%s %s${NC}  " "$bar" "$percent" "$stage" "$eta_str"
+            fi
+        else
+            # 还没有百分比输出，显示旋转动画
+            local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+            local elapsed=$(( SECONDS - start_time ))
+            local idx=$(( elapsed % 10 ))
+            local char="${spinner_chars:$idx:1}"
+            printf "\r  ${CYAN}  %s${NC} %s...  " "$char" "$msg"
+        fi
+        sleep 0.3
+    done
+
+    wait "$cmd_pid"
+    local exit_code=$?
+
+    printf "\r\033[K"
+
+    if [ $exit_code -ne 0 ]; then
+        echo -e "  ${RED}  ✗ ${msg} 失败${NC}"
+        tail -3 "$tmp_err" | sed 's/^/    /'
+    fi
+
+    rm -f "$tmp_out" "$tmp_err"
     return $exit_code
 }
 
@@ -698,7 +782,7 @@ install_or_update_st() {
         esac
 
         git remote set-url origin "$pull_url" 2>/dev/null
-        if ! run_with_spinner "拉取更新" git pull; then
+        if ! run_git_with_progress "拉取更新" git pull; then
             echo -e "  ${RED}  ✗ 更新失败${NC}"
             return 1
         fi
@@ -746,7 +830,7 @@ install_or_update_st() {
         esac
 
         echo -e "  ${CYAN}  从 ${best_git_mirror} 克隆仓库...${NC}"
-        if ! run_with_spinner "克隆仓库" git clone -b release "$clone_url" "$ST_INSTALL_DIR"; then
+        if ! run_git_with_progress "克隆仓库" git clone -b release "$clone_url" "$ST_INSTALL_DIR"; then
             echo -e "  ${RED}  ✗ 克隆失败${NC}"
             return 1
         fi
