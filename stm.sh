@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -909,11 +909,9 @@ start_st_background() {
     fi
 
     # 清理死掉的 screen 会话
-    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -q "Dead"; then
-        screen -wipe > /dev/null 2>&1
-    fi
+    screen -wipe > /dev/null 2>&1
 
-    # 检查是否已有同名会话（排除 Dead 状态）
+    # 检查是否已有活跃的同名会话
     if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
         echo -e "  ${YELLOW}  酒馆已在后台运行中${NC}"
         echo -e "  ${GRAY}  输入 screen -r ${ST_SCREEN_NAME} 可进入查看${NC}"
@@ -940,9 +938,11 @@ start_st_background() {
 stop_st() {
     echo -e "  ${CYAN}  正在停止 SillyTavern...${NC}"
 
-    # 停止 screen 会话
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
-        screen -S "$ST_SCREEN_NAME" -X quit 2>/dev/null
+    # 清理 Dead 会话 + 停止活跃会话
+    screen -wipe > /dev/null 2>&1
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
+        screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
+        sleep 1
         screen -wipe > /dev/null 2>&1
     fi
 
@@ -962,7 +962,8 @@ stop_st() {
 restart_st() {
     # 判断当前运行方式
     local run_mode="foreground"
-    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
+    screen -wipe > /dev/null 2>&1
+    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
         run_mode="screen"
     elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
         run_mode="systemd"
@@ -1792,9 +1793,12 @@ show_logo() {
 # 检测酒馆状态
 # 检测酒馆状态（返回: not_installed / running_screen / running_foreground / running_systemd / stopped）
 get_st_status() {
+    # 先清理可能存在的 Dead 会话
+    screen -wipe > /dev/null 2>&1
+
     if [ ! -d "$ST_INSTALL_DIR" ]; then
         echo "not_installed"
-    elif screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
+    elif screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
         echo "running_screen"
     elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
         echo "running_systemd"
