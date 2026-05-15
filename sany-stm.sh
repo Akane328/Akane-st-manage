@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.4"
+SCRIPT_VERSION="1.1.5"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -947,13 +947,29 @@ start_st_background() {
 
 # 检测 node server.js 是否在运行（兼容 Termux）
 is_node_running() {
-    if command -v pgrep > /dev/null 2>&1 && pgrep -f "node.*server.js" > /dev/null 2>&1; then
-        return 0
-    elif ps aux 2>/dev/null | grep -v grep | grep -q "node.*server.js"; then
-        return 0
-    elif ps -ef 2>/dev/null | grep -v grep | grep -q "node.*server.js"; then
+    # 方式1: pgrep（最可靠，但 Termux 可能未安装）
+    if command -v pgrep > /dev/null 2>&1; then
+        if pgrep -f "node.*server.js" > /dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    # 方式2: ps -A 列出所有进程（Termux 兼容）
+    if ps -A 2>/dev/null | grep -v grep | grep -q "node"; then
         return 0
     fi
+    # 方式3: ps -e（POSIX 标准）
+    if ps -e 2>/dev/null | grep -v grep | grep -q "node"; then
+        return 0
+    fi
+    # 方式4: /proc 文件系统直接检测
+    local pid_file
+    for pid_dir in /proc/[0-9]*; do
+        if [ -f "$pid_dir/cmdline" ] 2>/dev/null; then
+            if tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null | grep -q "node.*server.js"; then
+                return 0
+            fi
+        fi
+    done
     return 1
 }
 
