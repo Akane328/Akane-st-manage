@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -330,20 +330,42 @@ check_nodejs() {
     return $?
 }
 
-# 通过 nvm 安装 Node.js
+# 安装 Node.js
+# Termux 环境使用 pkg 安装（nvm 下载的官方二进制不兼容 Android Bionic libc）
+# 其他环境通过 nvm 安装
 install_nodejs() {
+    if is_termux; then
+        install_nodejs_termux
+    else
+        install_nodejs_nvm
+    fi
+    return $?
+}
+
+# Termux 环境：通过 pkg 安装 Node.js
+install_nodejs_termux() {
+    echo -e "\n  ${CYAN}[环境安装] 通过 pkg 安装 Node.js...${NC}"
+
+    if pkg install -y nodejs-lts 2>&1 | tail -5; then
+        if command -v node > /dev/null 2>&1; then
+            local installed_version
+            installed_version=$(node -v)
+            echo -e "  ${GREEN}  ✓ Node.js ${installed_version} 安装成功${NC}"
+            return 0
+        fi
+    fi
+
+    echo -e "  ${RED}  ✗ Node.js 安装失败${NC}"
+    return 1
+}
+
+# 非 Termux 环境：通过 nvm 安装 Node.js
+install_nodejs_nvm() {
     echo -e "\n  ${CYAN}[环境安装] 准备通过 nvm 安装 Node.js...${NC}"
 
     # 检查 nvm 是否已安装
     export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
     local nvm_installed=false
-
-    # Termux 环境：临时 unset PREFIX 以兼容 nvm
-    local _saved_prefix=""
-    if is_termux && [ -n "${PREFIX:-}" ]; then
-        _saved_prefix="$PREFIX"
-        unset PREFIX
-    fi
 
     if [ -s "$NVM_DIR/nvm.sh" ]; then
         source "$NVM_DIR/nvm.sh"
@@ -357,8 +379,8 @@ install_nodejs() {
     if [ "$nvm_installed" = false ]; then
         echo -e "  ${CYAN}  正在安装 nvm...${NC}"
 
-        # Termux 环境：确保 profile 文件存在（nvm 安装脚本需要写入初始化代码）
-        if is_termux && [ ! -f "$HOME/.bashrc" ]; then
+        # 确保 profile 文件存在（nvm 安装脚本需要写入初始化代码）
+        if [ ! -f "$HOME/.bashrc" ]; then
             touch "$HOME/.bashrc"
         fi
 
@@ -425,15 +447,11 @@ install_nodejs() {
     echo -e "  ${GRAY}  (使用镜像: ${best_node_mirror})${NC}"
 
     if ! nvm install --lts 2>&1 | tail -3; then
-        [ -n "$_saved_prefix" ] && export PREFIX="$_saved_prefix"
         echo -e "  ${RED}  ✗ Node.js 安装失败${NC}"
         return 1
     fi
 
     nvm use --lts > /dev/null 2>&1
-
-    # 恢复 Termux PREFIX
-    [ -n "$_saved_prefix" ] && export PREFIX="$_saved_prefix"
 
     # 验证安装
     if command -v node > /dev/null 2>&1; then
