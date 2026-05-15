@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -304,6 +304,13 @@ install_nodejs() {
     export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
     local nvm_installed=false
 
+    # Termux 环境：临时 unset PREFIX 以兼容 nvm
+    local _saved_prefix=""
+    if is_termux && [ -n "${PREFIX:-}" ]; then
+        _saved_prefix="$PREFIX"
+        unset PREFIX
+    fi
+
     if [ -s "$NVM_DIR/nvm.sh" ]; then
         source "$NVM_DIR/nvm.sh"
         if command -v nvm > /dev/null 2>&1; then
@@ -315,6 +322,11 @@ install_nodejs() {
     # 安装 nvm
     if [ "$nvm_installed" = false ]; then
         echo -e "  ${CYAN}  正在安装 nvm...${NC}"
+
+        # Termux 环境：确保 profile 文件存在（nvm 安装脚本需要写入初始化代码）
+        if is_termux && [ ! -f "$HOME/.bashrc" ]; then
+            touch "$HOME/.bashrc"
+        fi
 
         # 测速选择 nvm 安装源
         local best_nvm_mirror
@@ -379,11 +391,15 @@ install_nodejs() {
     echo -e "  ${GRAY}  (使用镜像: ${best_node_mirror})${NC}"
 
     if ! nvm install --lts 2>&1 | tail -3; then
+        [ -n "$_saved_prefix" ] && export PREFIX="$_saved_prefix"
         echo -e "  ${RED}  ✗ Node.js 安装失败${NC}"
         return 1
     fi
 
     nvm use --lts > /dev/null 2>&1
+
+    # 恢复 Termux PREFIX
+    [ -n "$_saved_prefix" ] && export PREFIX="$_saved_prefix"
 
     # 验证安装
     if command -v node > /dev/null 2>&1; then
@@ -613,8 +629,13 @@ start_st_background() {
         return 1
     fi
 
-    # 检查是否已有同名会话
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    # 清理死掉的 screen 会话
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -q "Dead"; then
+        screen -wipe > /dev/null 2>&1
+    fi
+
+    # 检查是否已有同名会话（排除 Dead 状态）
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
         echo -e "  ${YELLOW}  酒馆已在后台运行中${NC}"
         echo -e "  ${GRAY}  输入 screen -r ${ST_SCREEN_NAME} 可进入查看${NC}"
         return 0
@@ -643,6 +664,7 @@ stop_st() {
     # 停止 screen 会话
     if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
         screen -S "$ST_SCREEN_NAME" -X quit 2>/dev/null
+        screen -wipe > /dev/null 2>&1
     fi
 
     # 兜底：kill 残余进程
@@ -661,7 +683,7 @@ stop_st() {
 restart_st() {
     # 判断当前运行方式
     local run_mode="foreground"
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
         run_mode="screen"
     elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
         run_mode="systemd"
@@ -1493,7 +1515,7 @@ show_logo() {
 get_st_status() {
     if [ ! -d "$ST_INSTALL_DIR" ]; then
         echo "not_installed"
-    elif screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    elif screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -qv "Dead"; then
         echo "running_screen"
     elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
         echo "running_systemd"
