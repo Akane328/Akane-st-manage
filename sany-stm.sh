@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.0.5"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -89,22 +89,22 @@ ensure_screen() {
     echo -e "  ${CYAN}  screen 未安装，正在自动安装...${NC}"
 
     if is_termux; then
-        if pkg install -y screen 2>&1 | tail -3; then
+        if run_with_spinner "安装 screen" pkg install -y screen; then
             echo -e "  ${GREEN}  ✓ screen 安装成功${NC}"
             return 0
         fi
     elif command -v apt-get > /dev/null 2>&1; then
-        if sudo apt-get install -y screen 2>&1 | tail -3; then
+        if run_with_spinner "安装 screen" sudo apt-get install -y screen; then
             echo -e "  ${GREEN}  ✓ screen 安装成功${NC}"
             return 0
         fi
     elif command -v yum > /dev/null 2>&1; then
-        if sudo yum install -y screen 2>&1 | tail -3; then
+        if run_with_spinner "安装 screen" sudo yum install -y screen; then
             echo -e "  ${GREEN}  ✓ screen 安装成功${NC}"
             return 0
         fi
     elif command -v pacman > /dev/null 2>&1; then
-        if sudo pacman -S --noconfirm screen 2>&1 | tail -3; then
+        if run_with_spinner "安装 screen" sudo pacman -S --noconfirm screen; then
             echo -e "  ${GREEN}  ✓ screen 安装成功${NC}"
             return 0
         fi
@@ -123,22 +123,22 @@ ensure_git() {
     echo -e "  ${CYAN}  git 未安装，正在自动安装...${NC}"
 
     if is_termux; then
-        if pkg install -y git 2>&1 | tail -3; then
+        if run_with_spinner "安装 git" pkg install -y git; then
             echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
             return 0
         fi
     elif command -v apt-get > /dev/null 2>&1; then
-        if sudo apt-get install -y git 2>&1 | tail -3; then
+        if run_with_spinner "安装 git" sudo apt-get install -y git; then
             echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
             return 0
         fi
     elif command -v yum > /dev/null 2>&1; then
-        if sudo yum install -y git 2>&1 | tail -3; then
+        if run_with_spinner "安装 git" sudo yum install -y git; then
             echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
             return 0
         fi
     elif command -v pacman > /dev/null 2>&1; then
-        if sudo pacman -S --noconfirm git 2>&1 | tail -3; then
+        if run_with_spinner "安装 git" sudo pacman -S --noconfirm git; then
             echo -e "  ${GREEN}  ✓ git 安装成功${NC}"
             return 0
         fi
@@ -146,6 +146,153 @@ ensure_git() {
 
     echo -e "  ${RED}  ✗ git 安装失败，请手动安装${NC}"
     return 1
+}
+
+# ============================================================
+# 进度显示工具函数
+# ============================================================
+
+# 旋转动画执行命令（用于无法预估总量的操作）
+# 用法: run_with_spinner "提示文字" command args...
+# 返回值: 命令的退出码
+run_with_spinner() {
+    local msg="$1"
+    shift
+
+    local tmp_out
+    tmp_out=$(mktemp)
+    local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spin_len=${#spinner_chars}
+
+    # 后台执行命令
+    "$@" > "$tmp_out" 2>&1 &
+    local cmd_pid=$!
+    local start_time=$SECONDS
+    local i=0
+
+    # 前台显示旋转动画
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+        local elapsed=$(( SECONDS - start_time ))
+        local min=$((elapsed / 60))
+        local sec=$((elapsed % 60))
+        local time_str
+        if [ "$min" -gt 0 ]; then
+            time_str="${min}m${sec}s"
+        else
+            time_str="${sec}s"
+        fi
+        local char="${spinner_chars:$((i % spin_len)):1}"
+        printf "\r  ${CYAN}  %s${NC} %s ${GRAY}(%s)${NC}  " "$char" "$msg" "$time_str"
+        i=$((i + 1))
+        sleep 0.1
+    done
+
+    # 获取退出码
+    wait "$cmd_pid"
+    local exit_code=$?
+
+    # 清除动画行
+    printf "\r\033[K"
+
+    if [ $exit_code -ne 0 ]; then
+        # 失败时显示最后几行输出
+        echo -e "  ${RED}  ✗ ${msg} 失败${NC}"
+        tail -3 "$tmp_out" | sed 's/^/    /'
+    fi
+
+    rm -f "$tmp_out"
+    return $exit_code
+}
+
+# 绘制进度条
+# 用法: draw_progress_bar current total "提示文字"
+draw_progress_bar() {
+    local current="$1"
+    local total="$2"
+    local msg="$3"
+    local bar_width=20
+
+    if [ "$total" -le 0 ]; then
+        return
+    fi
+
+    local percent=$((current * 100 / total))
+    [ "$percent" -gt 100 ] && percent=100
+    local filled=$((percent * bar_width / 100))
+    local empty=$((bar_width - filled))
+
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    printf "\r  ${CYAN}  [%s] %3d%%${NC} ${GRAY}(%d/%d) %s${NC}  " "$bar" "$percent" "$current" "$total" "$msg"
+}
+
+# 带进度条的 tar 压缩
+# 用法: tar_compress_with_progress "提示文字" archive_path source_dir dir1 [dir2...]
+tar_compress_with_progress() {
+    local msg="$1"
+    local archive="$2"
+    local source_dir="$3"
+    shift 3
+    local -a dirs=("$@")
+
+    # 计算文件总数
+    local total=0
+    for d in "${dirs[@]}"; do
+        local count
+        count=$(find "$source_dir/$d" 2>/dev/null | wc -l)
+        total=$((total + count))
+    done
+
+    if [ "$total" -eq 0 ]; then
+        tar -czf "$archive" -C "$source_dir" "${dirs[@]}" 2>/dev/null
+        return $?
+    fi
+
+    # 使用 verbose 模式，输出到 stdout 用于计数
+    local current=0
+    tar -cvzf "$archive" -C "$source_dir" "${dirs[@]}" 2>/dev/null | \
+    while IFS= read -r _line; do
+        current=$((current + 1))
+        if (( current % 10 == 0 )) || [ "$current" -eq "$total" ]; then
+            draw_progress_bar "$current" "$total" "$msg"
+        fi
+    done
+
+    printf "\r\033[K"
+    [ -f "$archive" ]
+    return $?
+}
+
+# 带进度条的 tar 解压
+# 用法: tar_extract_with_progress "提示文字" archive_path dest_dir
+tar_extract_with_progress() {
+    local msg="$1"
+    local archive="$2"
+    local dest_dir="$3"
+
+    # 计算压缩包内条目总数
+    local total
+    total=$(tar -tzf "$archive" 2>/dev/null | wc -l)
+
+    if [ "$total" -eq 0 ]; then
+        tar -xzf "$archive" -C "$dest_dir" 2>/dev/null
+        return $?
+    fi
+
+    # verbose 解压并计数
+    local current=0
+    tar -xvzf "$archive" -C "$dest_dir" 2>/dev/null | \
+    while IFS= read -r _line; do
+        current=$((current + 1))
+        if (( current % 10 == 0 )) || [ "$current" -eq "$total" ]; then
+            draw_progress_bar "$current" "$total" "$msg"
+        fi
+    done
+
+    printf "\r\033[K"
+    return 0
 }
 
 # ============================================================
@@ -346,7 +493,7 @@ install_nodejs() {
 install_nodejs_termux() {
     echo -e "\n  ${CYAN}[环境安装] 通过 pkg 安装 Node.js...${NC}"
 
-    if pkg install -y nodejs-lts 2>&1 | tail -5; then
+    if run_with_spinner "安装 Node.js" pkg install -y nodejs-lts; then
         if command -v node > /dev/null 2>&1; then
             local installed_version
             installed_version=$(node -v)
@@ -446,7 +593,7 @@ install_nodejs_nvm() {
     echo -e "  ${CYAN}  正在通过 nvm 安装 Node.js LTS...${NC}"
     echo -e "  ${GRAY}  (使用镜像: ${best_node_mirror})${NC}"
 
-    if ! nvm install --lts 2>&1 | tail -3; then
+    if ! run_with_spinner "安装 Node.js LTS" nvm install --lts; then
         echo -e "  ${RED}  ✗ Node.js 安装失败${NC}"
         return 1
     fi
@@ -604,9 +751,8 @@ install_or_update_st() {
     fi
 
     # 安装依赖
-    echo -e "\n  ${CYAN}  正在安装依赖 (npm install)...${NC}"
     cd "$ST_INSTALL_DIR" || return 1
-    if ! npm install 2>&1 | tail -5; then
+    if ! run_with_spinner "安装依赖 (npm install)" npm install; then
         echo -e "  ${RED}  ✗ 依赖安装失败${NC}"
         return 1
     fi
@@ -1323,7 +1469,7 @@ create_backup() {
     [ -d "$ST_INSTALL_DIR/public" ] && tar_dirs+=("public")
 
     # 压缩打包
-    if tar -czf "$backup_path" -C "$ST_INSTALL_DIR" "${tar_dirs[@]}" 2>/dev/null; then
+    if tar_compress_with_progress "备份中" "$backup_path" "$ST_INSTALL_DIR" "${tar_dirs[@]}"; then
         local size
         size=$(du -sh "$backup_path" 2>/dev/null | cut -f1)
         echo -e "  ${GREEN}  ✓ 备份完成 (${size})${NC}"
@@ -1456,7 +1602,7 @@ restore_backup() {
     [ -d "$ST_INSTALL_DIR/data" ] && rm -rf "$ST_INSTALL_DIR/data"
     [ -d "$ST_INSTALL_DIR/public" ] && rm -rf "$ST_INSTALL_DIR/public"
 
-    if tar -xzf "$SELECTED_BACKUP" -C "$ST_INSTALL_DIR" 2>/dev/null; then
+    if tar_extract_with_progress "恢复中" "$SELECTED_BACKUP" "$ST_INSTALL_DIR"; then
         echo -e "  ${GREEN}  ✓ 恢复完成${NC}"
     else
         echo -e "  ${RED}  ✗ 恢复失败${NC}"
