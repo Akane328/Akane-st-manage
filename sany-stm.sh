@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.7"
+SCRIPT_VERSION="1.2.0"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -1854,7 +1854,17 @@ get_st_status() {
         return
     fi
 
-    # 检查 screen 会话状态
+    # Termux 环境：只检测 node 进程
+    if is_termux; then
+        if is_node_running; then
+            echo "running_foreground"
+        else
+            echo "stopped"
+        fi
+        return
+    fi
+
+    # 非 Termux：检查 screen 会话状态
     local screen_output
     screen_output=$(screen -ls 2>/dev/null)
     local screen_has_st=false
@@ -1862,7 +1872,6 @@ get_st_status() {
 
     if echo "$screen_output" | grep -q "$ST_SCREEN_NAME"; then
         screen_has_st=true
-        # 只有明确包含 Dead 或 "Remote or dead" 才视为无效
         if echo "$screen_output" | grep "$ST_SCREEN_NAME" | grep -qiE "dead"; then
             screen_is_dead=true
         fi
@@ -1924,7 +1933,11 @@ show_menu() {
     echo -e "  ${WHITE}── 操作菜单 ──────────────────────────────────${NC}"
     echo ""
     echo -e "  ${GREEN}1)${NC} 安装 / 更新 SillyTavern"
-    echo -e "  ${GREEN}2)${NC} 运行 / 停止 SillyTavern"
+    if is_termux; then
+        echo -e "  ${GREEN}2)${NC} 运行 SillyTavern"
+    else
+        echo -e "  ${GREEN}2)${NC} 运行 / 停止 SillyTavern"
+    fi
     echo -e "  ${GREEN}3)${NC} 配置管理"
     echo -e "  ${GREEN}4)${NC} 备份管理"
     echo -e "  ${RED}5)${NC} 卸载酒馆"
@@ -1945,7 +1958,11 @@ handle_input() {
             install_or_update_st
             ;;
         2)
-            start_management
+            if is_termux; then
+                start_st_foreground
+            else
+                start_management
+            fi
             ;;
         3)
             config_management
@@ -1975,8 +1992,10 @@ handle_input() {
 
 # 主循环
 main() {
-    # 启动时清理无效 screen 会话
-    cleanup_dead_screen
+    # 非 Termux：启动时清理无效 screen 会话
+    if ! is_termux; then
+        cleanup_dead_screen
+    fi
 
     while true; do
         clear_screen
