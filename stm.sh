@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.6"
+SCRIPT_VERSION="1.1.7"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -920,7 +920,22 @@ start_st_background() {
 
     echo -e "  ${CYAN}  正在后台运行 SillyTavern (screen)...${NC}"
     : > "$ST_LOG_FILE"
-    screen -dmS "$ST_SCREEN_NAME" bash -c "cd \"$ST_INSTALL_DIR\" && node server.js 2>&1 | tee \"$ST_LOG_FILE\""
+
+    # 获取当前 node 路径（确保 screen 子进程能找到）
+    local node_bin
+    node_bin=$(command -v node)
+
+    # 创建启动脚本（避免 screen + bash -c 引号嵌套和 PATH 问题）
+    local start_script="$HOME/.st_start.sh"
+    cat > "$start_script" << STEOF
+#!/bin/bash
+export PATH="$(dirname "$node_bin"):\$PATH"
+cd "$ST_INSTALL_DIR"
+node server.js 2>&1 | tee "$ST_LOG_FILE"
+STEOF
+    chmod +x "$start_script"
+
+    screen -dmS "$ST_SCREEN_NAME" "$start_script"
     sleep 3
 
     # 验证启动（检查 screen 会话是否存在）
