@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.5"
+SCRIPT_VERSION="1.0.6"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -23,6 +23,9 @@ ST_PORT=8000
 ST_SCREEN_NAME="SillyTavern"
 ST_LOG_FILE="$HOME/.sillytavern.log"
 SCRIPT_REPO_URL="https://raw.githubusercontent.com/Akane328/Akane-st-manage/main/sany-stm.sh"
+
+# 确保当前工作目录有效（防止从已删除目录启动导致 uv_cwd 错误）
+cd "$HOME" 2>/dev/null || cd / 2>/dev/null
 
 # 确保 screen socket 目录可用（修复 WSL 等环境下 /run/screen 权限问题）
 if [ ! -w "${SCREENDIR:-/run/screen}" ] 2>/dev/null; then
