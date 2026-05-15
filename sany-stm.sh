@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.3"
+SCRIPT_VERSION="1.1.4"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -912,7 +912,7 @@ start_st_background() {
     cleanup_dead_screen
 
     # 检查是否已有活跃的会话且 node 在运行
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME" && pgrep -f "node.*server.js" > /dev/null 2>&1; then
+    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME" && is_node_running; then
         echo -e "  ${YELLOW}  酒馆已在后台运行中${NC}"
         echo -e "  ${GRAY}  输入 screen -r ${ST_SCREEN_NAME} 可进入查看${NC}"
         return 0
@@ -926,16 +926,21 @@ start_st_background() {
 
     echo -e "  ${CYAN}  正在后台运行 SillyTavern (screen)...${NC}"
     : > "$ST_LOG_FILE"
-    screen -dmS "$ST_SCREEN_NAME" bash -c "cd '$ST_INSTALL_DIR' && node server.js 2>&1 | tee '$ST_LOG_FILE'"
-    sleep 2
+    screen -dmS "$ST_SCREEN_NAME" bash -c "cd \"$ST_INSTALL_DIR\" && node server.js 2>&1 | tee \"$ST_LOG_FILE\""
+    sleep 3
 
     # 验证启动
-    if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    if is_node_running; then
         echo -e "  ${GREEN}  ✓ SillyTavern 已在后台运行${NC}"
         echo -e "  ${GRAY}  访问地址: http://localhost:${ST_PORT}${NC}"
         echo -e "  ${GRAY}  查看日志: screen -r ${ST_SCREEN_NAME}${NC}"
     else
         echo -e "  ${RED}  ✗ 运行失败，请尝试前台运行查看错误信息${NC}"
+        # 显示日志帮助排查
+        if [ -s "$ST_LOG_FILE" ]; then
+            echo -e "  ${GRAY}  最近日志:${NC}"
+            tail -5 "$ST_LOG_FILE" | sed 's/^/    /'
+        fi
         return 1
     fi
 }
