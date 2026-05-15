@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.9"
+SCRIPT_VERSION="1.1.0"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -1894,6 +1894,11 @@ handle_input() {
 
 # 主循环
 main() {
+    # 启动时清理 Dead screen 会话
+    if screen -ls 2>/dev/null | grep "$ST_SCREEN_NAME" | grep -q "Dead"; then
+        screen -wipe > /dev/null 2>&1
+    fi
+
     while true; do
         clear_screen
         show_logo
