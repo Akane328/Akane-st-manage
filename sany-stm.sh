@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0.6"
+SCRIPT_VERSION="1.0.7"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -698,7 +698,7 @@ install_or_update_st() {
         esac
 
         git remote set-url origin "$pull_url" 2>/dev/null
-        if ! git pull 2>&1 | tail -5; then
+        if ! run_with_spinner "拉取更新" git pull; then
             echo -e "  ${RED}  ✗ 更新失败${NC}"
             return 1
         fi
@@ -746,7 +746,7 @@ install_or_update_st() {
         esac
 
         echo -e "  ${CYAN}  从 ${best_git_mirror} 克隆仓库...${NC}"
-        if ! git clone --progress -b release "$clone_url" "$ST_INSTALL_DIR" 2>&1; then
+        if ! run_with_spinner "克隆仓库" git clone -b release "$clone_url" "$ST_INSTALL_DIR"; then
             echo -e "  ${RED}  ✗ 克隆失败${NC}"
             return 1
         fi
