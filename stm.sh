@@ -15,7 +15,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.1.2"
+SCRIPT_VERSION="1.1.3"
 AUTHOR="Akane"
 GROUP_ID="1067487432"
 ST_INSTALL_DIR="$HOME/SillyTavern"
@@ -940,6 +940,18 @@ start_st_background() {
     fi
 }
 
+# 检测 node server.js 是否在运行（兼容 Termux）
+is_node_running() {
+    if command -v pgrep > /dev/null 2>&1 && pgrep -f "node.*server.js" > /dev/null 2>&1; then
+        return 0
+    elif ps aux 2>/dev/null | grep -v grep | grep -q "node.*server.js"; then
+        return 0
+    elif ps -ef 2>/dev/null | grep -v grep | grep -q "node.*server.js"; then
+        return 0
+    fi
+    return 1
+}
+
 # 停止 SillyTavern
 stop_st() {
     echo -e "  ${CYAN}  正在停止 SillyTavern...${NC}"
@@ -956,7 +968,7 @@ stop_st() {
     pkill -f "node.*server.js" 2>/dev/null
     sleep 1
 
-    if ! pgrep -f "node.*server.js" > /dev/null 2>&1; then
+    if ! is_node_running; then
         echo -e "  ${GREEN}  ✓ 酒馆已停止${NC}"
     else
         echo -e "  ${RED}  ✗ 停止失败，请手动终止进程${NC}"
@@ -1813,29 +1825,45 @@ get_st_status() {
         return
     fi
 
-    # 检查 node server.js 进程是否存活
-    local node_running=false
-    if pgrep -f "node.*server.js" > /dev/null 2>&1; then
-        node_running=true
+    # 检查 screen 会话状态
+    local screen_output
+    screen_output=$(screen -ls 2>/dev/null)
+    local screen_has_st=false
+    local screen_is_dead=false
+
+    if echo "$screen_output" | grep -q "$ST_SCREEN_NAME"; then
+        screen_has_st=true
+        if echo "$screen_output" | grep "$ST_SCREEN_NAME" | grep -qiE "dead|remote"; then
+            screen_is_dead=true
+        fi
     fi
 
     # 清理无效 screen 会话
-    cleanup_dead_screen
+    if [ "$screen_is_dead" = true ]; then
+        screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
+        screen -wipe > /dev/null 2>&1
+        screen_has_st=false
+    fi
 
-    if [ "$node_running" = true ]; then
-        if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    if is_node_running; then
+        if [ "$screen_has_st" = true ]; then
             echo "running_screen"
         elif systemctl --user is-active sillytavern > /dev/null 2>&1; then
             echo "running_systemd"
         else
             echo "running_foreground"
         fi
-    else
-        # node 没在跑，清理残留 screen
-        if screen -ls 2>/dev/null | grep -q "$ST_SCREEN_NAME"; then
+    elif [ "$screen_has_st" = true ]; then
+        # screen 存在但 node 没检测到 — 可能刚启动还没 fork
+        sleep 1
+        if is_node_running; then
+            echo "running_screen"
+        else
             screen -S "$ST_SCREEN_NAME" -X quit > /dev/null 2>&1
             screen -wipe > /dev/null 2>&1
+            echo "stopped"
         fi
+    else
         echo "stopped"
     fi
 }
